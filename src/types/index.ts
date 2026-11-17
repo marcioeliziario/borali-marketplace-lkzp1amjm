@@ -1,3 +1,5 @@
+import type { Variation, ComplementGroup } from '@/lib/catalog'
+
 export type UserRole = 'admin' | 'merchant' | 'delivery' | 'customer'
 
 export interface City {
@@ -71,32 +73,89 @@ export interface Store {
   }
 }
 
-export type ProductUnit = 'un' | 'kg' | 'g' | 'l' | 'ml' | 'cx' | 'pct' | 'fardo' | 'duzia'
+export type ProductUnit =
+  | 'un'
+  | 'kg'
+  | 'g'
+  | 'l'
+  | 'ml'
+  | 'cx'
+  | 'pct'
+  | 'fardo'
+  | 'duzia'
+  | 'porcao'
+  | 'garrafa'
+  | 'lata'
+  | 'bandeja'
+
+/** Categoria interna configurada pelo próprio estabelecimento */
+export interface StoreCategory {
+  id: string
+  store_id: string
+  name: string
+  display_order?: number
+  is_active: boolean
+  created?: string
+  updated?: string
+}
+
+/** Movimentação de estoque (histórico com motivo, usuário e data) */
+export interface StockMovement {
+  id: string
+  store_id: string
+  product_id: string
+  variation_key?: string
+  delta: number
+  result_stock: number
+  reason: string
+  user_email?: string
+  created?: string
+}
 
 export interface Product {
   id: string
   store_id: string
   category_id?: string
+  /** Categoria interna do estabelecimento */
+  store_category_id?: string
   name: string
   description?: string
+  description_full?: string
   image_url?: string
+  photos?: string[]
+  main_photo?: string
   brand?: string
+  subcategory?: string
+  internal_code?: string
   unit: ProductUnit
+  custom_unit?: string
   price: number
   promo_price?: number
+  promo_starts_at?: string
+  promo_ends_at?: string
   stock?: number
+  min_stock?: number
+  track_stock?: boolean
+  allow_fractional?: boolean
+  estimated_weight?: number
+  final_weight?: number
   is_available: boolean
   barcode?: string
+  returnable?: boolean
+  sale_locked?: boolean
+  expires_at?: string
+  lot?: string
   is_demo?: boolean
   is_regulated?: boolean
-  variations?: any
-  complements?: any
-  status: 'active' | 'inactive' | 'draft'
+  variations?: Variation[] | string
+  complements?: ComplementGroup[] | string
+  status: 'active' | 'inactive' | 'draft' | 'archived'
   created?: string
   updated?: string
   expand?: {
     store_id?: Store
     category_id?: Category
+    store_category_id?: StoreCategory
   }
 }
 

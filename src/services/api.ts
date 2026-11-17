@@ -1,5 +1,14 @@
 import pb from '@/lib/pocketbase/client'
-import { City, Category, Store, Product, Order, AuditLog } from '@/types'
+import {
+  City,
+  Category,
+  Store,
+  Product,
+  Order,
+  AuditLog,
+  StoreCategory,
+  StockMovement,
+} from '@/types'
 
 // CIDADES
 export async function getCities(): Promise<City[]> {
@@ -98,6 +107,41 @@ export async function updateStore(storeId: string, data: Partial<Store>): Promis
   return await pb.collection('stores').update<Store>(storeId, data)
 }
 
+// CATEGORIAS INTERNAS DA LOJA
+export async function getStoreCategories(storeId: string): Promise<StoreCategory[]> {
+  try {
+    return await pb.collection('store_categories').getFullList<StoreCategory>({
+      filter: `store_id = "${storeId}" && is_active = true`,
+      sort: 'display_order,name',
+    })
+  } catch (error) {
+    console.error('Erro ao buscar categorias internas:', error)
+    return []
+  }
+}
+
+export async function getAllStoreCategoriesAdmin(storeId: string): Promise<StoreCategory[]> {
+  return await pb.collection('store_categories').getFullList<StoreCategory>({
+    filter: `store_id = "${storeId}"`,
+    sort: 'display_order,name',
+  })
+}
+
+export async function createStoreCategory(data: Partial<StoreCategory>): Promise<StoreCategory> {
+  return await pb.collection('store_categories').create<StoreCategory>(data)
+}
+
+export async function updateStoreCategory(
+  id: string,
+  data: Partial<StoreCategory>,
+): Promise<StoreCategory> {
+  return await pb.collection('store_categories').update<StoreCategory>(id, data)
+}
+
+export async function deleteStoreCategory(id: string): Promise<boolean> {
+  return await pb.collection('store_categories').delete(id)
+}
+
 // PRODUTOS
 export async function getProductsByStore(storeId: string, categoryId?: string): Promise<Product[]> {
   try {
@@ -119,9 +163,45 @@ export async function getProductsByStore(storeId: string, categoryId?: string): 
 export async function getMerchantProducts(storeId: string): Promise<Product[]> {
   return await pb.collection('products').getFullList<Product>({
     filter: `store_id = "${storeId}"`,
-    expand: 'category_id',
+    expand: 'category_id,store_category_id',
     sort: '-created',
   })
+}
+
+/** Histórico de movimentações de estoque de um produto */
+export async function getStockMovements(productId: string): Promise<StockMovement[]> {
+  try {
+    return await pb.collection('stock_movements').getFullList<StockMovement>({
+      filter: `product_id = "${productId}"`,
+      sort: '-created',
+    })
+  } catch (error) {
+    console.error('Erro ao buscar movimentações de estoque:', error)
+    return []
+  }
+}
+
+/** Atualização em lote via hook backend (valida propriedade server-side) */
+export async function bulkUpdateProducts(
+  ids: string[],
+  patch: Record<string, unknown>,
+): Promise<{ updated: string[] }> {
+  const res = await pb.send('/backend/v1/borali/products/bulk-update', {
+    method: 'POST',
+    body: { ids, patch },
+  })
+  return res as { updated: string[] }
+}
+
+/** Exclusão em lote via hook backend — produtos com histórico são arquivados, não excluídos */
+export async function bulkDeleteProducts(
+  ids: string[],
+): Promise<{ deleted: string[]; skipped_archived: string[] }> {
+  const res = await pb.send('/backend/v1/borali/products/bulk-delete', {
+    method: 'POST',
+    body: { ids },
+  })
+  return res as { deleted: string[]; skipped_archived: string[] }
 }
 
 export async function createProduct(data: Partial<Product>): Promise<Product> {

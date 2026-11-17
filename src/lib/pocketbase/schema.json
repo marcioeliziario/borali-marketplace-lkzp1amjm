@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-17T11:22:41.302Z",
+  "generatedAt": "2026-11-17T13:16:58.819Z",
   "collections": [
     {
       "name": "users",
@@ -377,10 +377,10 @@
       "name": "products",
       "type": "base",
       "apiRules": {
-        "list": "@request.auth.role = 'admin' || (@request.auth.store_id != '' && @request.auth.store_id = store_id) || store_id != ''",
-        "view": "@request.auth.role = 'admin' || (@request.auth.store_id != '' && @request.auth.store_id = store_id) || store_id != ''",
+        "list": "@request.auth.role = 'admin' || (@request.auth.store_id != '' && @request.auth.store_id = store_id) || status = 'active'",
+        "view": "@request.auth.role = 'admin' || (@request.auth.store_id != '' && @request.auth.store_id = store_id) || status = 'active'",
         "create": "@request.auth.role = 'admin' || (@request.auth.role = 'merchant' && @request.auth.store_id = @request.body.store_id)",
-        "update": "@request.auth.role = 'admin' || (@request.auth.role = 'merchant' && @request.auth.store_id = store_id)",
+        "update": "@request.auth.role = 'admin' || (@request.auth.role = 'merchant' && @request.auth.store_id = store_id && store_id = @request.body.store_id)",
         "delete": "@request.auth.role = 'admin' || (@request.auth.role = 'merchant' && @request.auth.store_id = store_id)"
       },
       "fields": [
@@ -427,7 +427,21 @@
           "type": "select",
           "required": true,
           "system": false,
-          "selectValues": ["un", "kg", "g", "l", "ml", "cx", "pct", "fardo", "duzia"]
+          "selectValues": [
+            "un",
+            "kg",
+            "g",
+            "l",
+            "ml",
+            "cx",
+            "pct",
+            "fardo",
+            "duzia",
+            "porcao",
+            "garrafa",
+            "lata",
+            "bandeja"
+          ]
         },
         {
           "name": "price",
@@ -488,7 +502,7 @@
           "type": "select",
           "required": true,
           "system": false,
-          "selectValues": ["active", "inactive", "draft"]
+          "selectValues": ["active", "inactive", "draft", "archived"]
         },
         {
           "name": "created",
@@ -503,6 +517,115 @@
           "required": false,
           "system": false,
           "autodateTriggers": ["onCreate", "onUpdate"]
+        },
+        {
+          "name": "description_full",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "subcategory",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "internal_code",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "custom_unit",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "main_photo",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "lot",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "promo_starts_at",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "promo_ends_at",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "min_stock",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "estimated_weight",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "final_weight",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "track_stock",
+          "type": "bool",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "allow_fractional",
+          "type": "bool",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "returnable",
+          "type": "bool",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "sale_locked",
+          "type": "bool",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "photos",
+          "type": "file",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "expires_at",
+          "type": "date",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "store_category_id",
+          "type": "relation",
+          "required": false,
+          "system": false,
+          "collectionRef": "store_categories"
         }
       ],
       "indexes": [
@@ -707,6 +830,127 @@
         }
       ],
       "indexes": ["CREATE INDEX idx_audit_created ON audit_log (created DESC)"]
+    },
+    {
+      "name": "store_categories",
+      "type": "base",
+      "apiRules": {
+        "list": "",
+        "view": "",
+        "create": "@request.auth.role = 'admin' || (@request.auth.role = 'merchant' && @request.auth.store_id = @request.body.store_id)",
+        "update": "@request.auth.role = 'admin' || (@request.auth.role = 'merchant' && @request.auth.store_id = store_id)",
+        "delete": "@request.auth.role = 'admin' || (@request.auth.role = 'merchant' && @request.auth.store_id = store_id)"
+      },
+      "fields": [
+        {
+          "name": "store_id",
+          "type": "relation",
+          "required": true,
+          "system": false,
+          "collectionRef": "stores"
+        },
+        {
+          "name": "name",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "display_order",
+          "type": "number",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "is_active",
+          "type": "bool",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        },
+        {
+          "name": "updated",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate", "onUpdate"]
+        }
+      ],
+      "indexes": ["CREATE INDEX idx_storecat_store ON store_categories (store_id)"]
+    },
+    {
+      "name": "stock_movements",
+      "type": "base",
+      "apiRules": {
+        "list": "@request.auth.role = 'admin' || (@request.auth.role = 'merchant' && @request.auth.store_id = store_id)",
+        "view": "@request.auth.role = 'admin' || (@request.auth.role = 'merchant' && @request.auth.store_id = store_id)",
+        "create": "@request.auth.role = 'admin'",
+        "update": null,
+        "delete": null
+      },
+      "fields": [
+        {
+          "name": "store_id",
+          "type": "relation",
+          "required": true,
+          "system": false,
+          "collectionRef": "stores"
+        },
+        {
+          "name": "product_id",
+          "type": "relation",
+          "required": true,
+          "system": false,
+          "collectionRef": "products"
+        },
+        {
+          "name": "variation_key",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "delta",
+          "type": "number",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "result_stock",
+          "type": "number",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "reason",
+          "type": "text",
+          "required": true,
+          "system": false
+        },
+        {
+          "name": "user_email",
+          "type": "text",
+          "required": false,
+          "system": false
+        },
+        {
+          "name": "created",
+          "type": "autodate",
+          "required": false,
+          "system": false,
+          "autodateTriggers": ["onCreate"]
+        }
+      ],
+      "indexes": [
+        "CREATE INDEX idx_stockmov_product ON stock_movements (product_id)",
+        "CREATE INDEX idx_stockmov_created ON stock_movements (created DESC)"
+      ]
     }
   ]
 }
