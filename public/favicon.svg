@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <defs>
+    <linearGradient id="boraliGrad" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1754AE"/>
+      <stop offset="1" stop-color="#0E3B7D"/>
+    </linearGradient>
+  </defs>
+  <!-- Fundo arrendondado Azul Óbidos -->
+  <rect width="64" height="64" rx="16" fill="url(#boraliGrad)"/>
+  
+  <!-- Pin de Localização / Cidade estilizado com B -->
+  <path d="M32 10C22.611 10 15 17.611 15 27c0 11.25 15.2 25.8 15.85 26.42a1.65 1.65 0 002.3 0C33.8 52.8 49 38.25 49 27c0-9.389-7.611-17-17-17z" fill="#FFFFFF" fill-opacity="0.15"/>
+  
+  <!-- Acento Vermelho de Óbidos (destaque) -->
+  <circle cx="43" cy="21" r="5" fill="#E63239"/>
+  <circle cx="43" cy="21" r="2" fill="#FFFFFF"/>
+  
+  <!-- Letra B estilizada em branco -->
+  <path d="M24 18h10c4.418 0 8 2.686 8 6 0 2.21-1.6 4.1-4 5.167 3.2 1.066 5 3.233 5 5.833 0 3.866-4.03 7-9 7H24V18z" fill="#FFFFFF"/>
+  <path d="M30 23h3.5c1.933 0 3.5 1.12 3.5 2.5S35.433 28 33.5 28H30v-5zm0 9h4c2.209 0 4 1.343 4 3s-1.791 3-4 3H30v-6z" fill="#1754AE"/>
+</svg>
