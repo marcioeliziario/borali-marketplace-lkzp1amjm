@@ -81,13 +81,21 @@ export async function getAllStoresAdmin(): Promise<Store[]> {
   })
 }
 
-export async function getStoreBySlug(cityId: string, storeSlug: string): Promise<Store | null> {
+/**
+ * Resolve a loja pelo slug da cidade + slug da loja (rota /:citySlug/:storeSlug).
+ * Filtra via relação city_id.slug — não depende de resolver a cidade antes,
+ * e usa o MESMO critério de disponibilidade da home (approved + is_active).
+ */
+export async function getStoreBySlug(citySlug: string, storeSlug: string): Promise<Store | null> {
   try {
     return await pb
       .collection('stores')
-      .getFirstListItem<Store>(`city_id = "${cityId}" && slug = "${storeSlug}"`, {
-        expand: 'city_id,category_ids',
-      })
+      .getFirstListItem<Store>(
+        `city_id.slug = "${citySlug}" && slug = "${storeSlug}" && status = "approved" && is_active = true`,
+        {
+          expand: 'city_id,category_ids',
+        },
+      )
   } catch {
     return null
   }
