@@ -65,10 +65,10 @@ export function getPromoInfo(product: PromoProductRef, now: Date = new Date()): 
     return { hasPromo: false, expired: false, notStarted: false, discountPct: 0 }
   }
   const toDate = (v?: string | number | null): Date | null => {
-    if (v === null || v === undefined || v === '') return null
+    if (v === null || v === undefined || v === '' || v === 0 || v === '0') return null
     if (typeof v === 'number') return new Date(v < 1e12 ? v * 1000 : v)
     const asNum = Number(v)
-    if (!Number.isNaN(asNum) && v !== '' && /^-?\d+(\.\d+)?$/.test(String(v).trim())) {
+    if (!Number.isNaN(asNum) && /^-?\d+(\.\d+)?$/.test(String(v).trim())) {
       return new Date(asNum < 1e12 ? asNum * 1000 : asNum)
     }
     const parsed = new Date(v)
