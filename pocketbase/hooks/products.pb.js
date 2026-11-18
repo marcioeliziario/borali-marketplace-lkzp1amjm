@@ -4,7 +4,43 @@
  * 1. Rotas em lote (atualizar / excluir) com isolamento server-side entre estabelecimentos
  * 2. Registro de movimentações de estoque quando stock muda
  * 3. Log de auditoria server-side para alterações de produtos
+ * 4. Sanitização da resposta pública: campos administrativos só para o dono/admin (correção C7)
  */
+
+// ---- CORREÇÃO C7: campos administrativos expostos publicamente ----
+// A listRule de products é pública (catálogo do consumidor). Em vez de bloquear a
+// navegação, a serialização é sanitizada no servidor: visitantes e comerciantes
+// autenticados recebem apenas dados de catálogo de lojas alheias; o dono do produto
+// e o admin continuam vendo/escrevendo todos os campos (o painel não muda).
+onRecordEnrich((e) => {
+  // Declarações inline — o JSVM do PocketBase não permite referenciar
+  // declarações de top-level dentro de callbacks (scoping por VM pool).
+  const adminFields = [
+    'stock',
+    'min_stock',
+    'barcode',
+    'internal_code',
+    'lot',
+    'expires_at',
+    'estimated_weight',
+    'final_weight',
+    'cost_price',
+    'supplier',
+  ]
+  const auth = e.requestInfo().auth
+  const rec = e.record
+  const isSuperuser = !!auth && auth.get('collectionName') === '_superusers'
+  const isOwner =
+    !!auth && auth.get('role') === 'merchant' && auth.get('store_id') === rec.get('store_id')
+  const isAdmin = !!auth && auth.get('role') === 'admin'
+
+  if (!isSuperuser && !isAdmin && !isOwner) {
+    for (const f of adminFields) {
+      rec.hide(f)
+    }
+  }
+  return e.next()
+}, 'products')
 routerAdd(
   'POST',
   '/backend/v1/borali/products/bulk-update',
