@@ -177,16 +177,35 @@ export async function getMerchantProducts(storeId: string): Promise<Product[]> {
 }
 
 /** Histórico de movimentações de estoque de um produto */
-export async function getStockMovements(productId: string): Promise<StockMovement[]> {
+export async function getStockMovements(options: {
+  productId: string
+  perPage?: number
+}): Promise<StockMovement[]> {
   try {
-    return await pb.collection('stock_movements').getFullList<StockMovement>({
-      filter: `product_id = "${productId}"`,
-      sort: '-created',
-    })
+    return await pb
+      .collection('stock_movements')
+      .getList<StockMovement>(1, options.perPage ?? 20, {
+        filter: `product_id = "${options.productId}"`,
+        sort: '-created',
+      })
+      .then((r) => r.items)
   } catch (error) {
     console.error('Erro ao buscar movimentações de estoque:', error)
     return []
   }
+}
+
+/** Ajuste manual de estoque — o hook backend registra a movimentação e bloqueia negativo */
+export async function adjustStock(
+  productId: string,
+  delta: number,
+  reason: string,
+): Promise<Product> {
+  const res = await pb.send('/backend/v1/borali/stock/adjust', {
+    method: 'POST',
+    body: { product_id: productId, delta, reason },
+  })
+  return res as Product
 }
 
 /** Atualização em lote via hook backend (valida propriedade server-side) */

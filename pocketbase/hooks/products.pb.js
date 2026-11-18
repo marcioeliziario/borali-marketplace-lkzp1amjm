@@ -98,6 +98,95 @@ routerAdd(
   $apis.requireAuth(),
 )
 
+// ---- Ajuste manual de estoque (registra movimentação + auditoria, bloqueia negativo) ----
+routerAdd(
+  'POST',
+  '/backend/v1/borali/stock/adjust',
+  (e) => {
+    const info = e.requestInfo()
+    const auth = e.auth
+    const body = info.body || {}
+
+    if (!auth) throw new BadRequestError('Autenticação necessária.')
+    if (auth.get('role') !== 'merchant' && auth.get('role') !== 'admin') {
+      throw new ForbiddenError('Somente comerciantes ou administradores.')
+    }
+    if (auth.get('role') !== 'admin' && !auth.get('store_id')) {
+      throw new ForbiddenError('Usuário sem estabelecimento vinculado.')
+    }
+
+    const productId = body.product_id
+    const delta = Math.trunc(Number(body.delta) || 0)
+    const reason = String(body.reason || 'Ajuste manual').slice(0, 200)
+    if (!productId || delta === 0) {
+      throw new BadRequestError('Informe produto e quantidade (diferente de zero).')
+    }
+
+    const productsCol = e.app.findCollectionByNameOrId('products')
+    let rec
+    try {
+      rec = e.app.findRecordById(productsCol, productId)
+    } catch (_) {
+      throw new NotFoundError('Produto não encontrado.')
+    }
+
+    // Isolamento entre estabelecimentos
+    if (auth.get('role') !== 'admin' && rec.get('store_id') !== auth.get('store_id')) {
+      throw new ForbiddenError(
+        'Acesso negado: o produto pertence a outro estabelecimento. Operação registrada.',
+      )
+    }
+    if (rec.get('track_stock') === false) {
+      throw new BadRequestError('Este produto é sob encomenda e não controla estoque.')
+    }
+
+    const current = Number(rec.get('stock') ?? 0)
+    const result = current + delta
+    if (result < 0) {
+      throw new BadRequestError(
+        'Estoque não pode ficar negativo. Saída máxima: ' +
+          current +
+          ' ' +
+          (rec.get('unit') || 'un'),
+      )
+    }
+
+    rec.set('stock', result)
+    e.app.save(rec)
+
+    try {
+      const mv = new Record(e.app.findCollectionByNameOrId('stock_movements'))
+      mv.set('store_id', rec.get('store_id'))
+      mv.set('product_id', rec.get('id'))
+      mv.set('delta', delta)
+      mv.set('result_stock', result)
+      mv.set('reason', reason)
+      mv.set('user_email', auth.get('email'))
+      e.app.save(mv)
+    } catch (_) {}
+
+    try {
+      const log = new Record(e.app.findCollectionByNameOrId('audit_log'))
+      log.set('user_id', auth.get('id'))
+      log.set('user_email', auth.get('email'))
+      log.set('user_role', auth.get('role'))
+      log.set('action', 'stock.adjusted')
+      log.set('resource', 'stock_movements')
+      log.set('resource_id', rec.get('id'))
+      log.set('details', JSON.stringify({ delta, result, reason, store_id: rec.get('store_id') }))
+      e.app.save(log)
+    } catch (_) {}
+
+    return e.json(200, {
+      id: rec.get('id'),
+      name: rec.get('name'),
+      stock: result,
+      unit: rec.get('unit'),
+    })
+  },
+  $apis.requireAuth(),
+)
+
 routerAdd(
   'POST',
   '/backend/v1/borali/products/bulk-delete',

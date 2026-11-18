@@ -1,40 +1,35 @@
-import React, { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import {
-  Store,
-  Package,
-  Plus,
-  Edit2,
-  Trash2,
-  Clock,
-  Bike,
-  AlertCircle,
-  CheckCircle2,
-  DollarSign,
-  TrendingUp,
-  Settings,
-  ShoppingBag,
-  Info,
-} from 'lucide-react'
+import React, { useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
+import { useToast } from '@/hooks/use-toast'
 import { useAuth } from '@/contexts/AuthContext'
 import {
   getStoreById,
   getMerchantProducts,
+  getAllStoreCategoriesAdmin,
   createProduct,
   updateProduct,
   deleteProduct,
-  updateStore,
-  getStoreOrders,
+  bulkUpdateProducts,
+  bulkDeleteProducts,
   logAudit,
-  getCategories,
+  getStoreOrders,
 } from '@/services/api'
-import { Store as StoreType, Product, Category, Order, ProductUnit } from '@/types'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Badge } from '@/components/ui/badge'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import type { Product, Store, StoreCategory, Order } from '@/types'
+import { getEffectivePrice, isPromoActive, getPromoInfo, formatBRL } from '@/lib/catalog'
+import { productsToCSV } from '@/lib/csv'
+import {
+  ProductFormModal,
+  formValuesToPayload,
+  emptyProductForm,
+  type ProductFormValues,
+} from '@/components/merchant/ProductFormModal'
+import { PhotosEditor } from '@/components/merchant/PhotosEditor'
+import { VariationsEditor } from '@/components/merchant/VariationsEditor'
+import { ComplementsEditor } from '@/components/merchant/ComplementsEditor'
+import { CategoryManagerModal } from '@/components/merchant/CategoryManagerModal'
+import { StockAdjustModal } from '@/components/merchant/StockAdjustModal'
+import { CSVImportModal } from '@/components/merchant/CSVImportModal'
+import pb from '@/lib/pocketbase/client'
 import {
   Dialog,
   DialogContent,
@@ -43,755 +38,967 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { useToast } from '@/hooks/use-toast'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Badge } from '@/components/ui/badge'
+import { Card, CardContent } from '@/components/ui/card'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
+import {
+  Archive,
+  ArchiveRestore,
+  BarChart3,
+  Copy,
+  Download,
+  FileUp,
+  FolderTree,
+  Loader2,
+  Package,
+  Pencil,
+  Plus,
+  Power,
+  Search,
+  Store,
+  Trash2,
+  TriangleAlert,
+  Upload,
+} from 'lucide-react'
 
+const MAX_MB = 5
+const ACCEPTED = ['image/jpeg', 'image/png', 'image/webp']
+
+type QuickEditModal = { product: Product; section: 'photos' | 'variations' | 'complements' } | null
+
+/** Painel do Comerciante — v0.2 completo (produtos, fotos, promoções, estoque, lote, CSV). */
 export const MerchantDashboard: React.FC = () => {
-  const { user, isMerchant, isAdmin } = useAuth()
-  const navigate = useNavigate()
+  const { user, logout } = useAuth()
   const { toast } = useToast()
 
-  const [store, setStore] = useState<StoreType | null>(null)
+  const [store, setStore] = useState<Store | null>(null)
   const [products, setProducts] = useState<Product[]>([])
-  const [categories, setCategories] = useState<Category[]>([])
+  const [categories, setCategories] = useState<StoreCategory[]>([])
   const [orders, setOrders] = useState<Order[]>([])
-  const [isLoading, setIsLoading] = useState(true)
+  const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState('')
 
-  // Modal de Produto
-  const [isProductModalOpen, setIsProductModalOpen] = useState(false)
-  const [editingProduct, setEditingProduct] = useState<Product | null>(null)
+  // Seleção em lote
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [bulkBusy, setBulkBusy] = useState(false)
+  const [confirmBulk, setConfirmBulk] = useState<
+    null | 'archive' | 'activate' | 'deactivate' | 'delete' | 'duplicate'
+  >(null)
 
-  // Form State Produto
-  const [prodName, setProdName] = useState('')
-  const [prodDesc, setProdDesc] = useState('')
-  const [prodPrice, setProdPrice] = useState('')
-  const [prodPromoPrice, setProdPromoPrice] = useState('')
-  const [prodUnit, setProdUnit] = useState<ProductUnit>('un')
-  const [prodStock, setProdStock] = useState('')
-  const [prodCategory, setProdCategory] = useState('')
-  const [prodBarcode, setProdBarcode] = useState('')
-  const [prodIsDemo, setProdIsDemo] = useState(false)
-  const [prodIsRegulated, setProdIsRegulated] = useState(false)
-  const [prodBrand, setProdBrand] = useState('')
-  const [isSavingProduct, setIsSavingProduct] = useState(false)
+  // Formulários e modais
+  const [formOpen, setFormOpen] = useState(false)
+  const [editing, setEditing] = useState<Product | null>(null)
+  const [quickEdit, setQuickEdit] = useState<QuickEditModal>(null)
+  const [catManagerOpen, setCatManagerOpen] = useState(false)
+  const [stockProduct, setStockProduct] = useState<Product | null>(null)
+  const [stockOpen, setStockOpen] = useState(false)
+  const [csvImportOpen, setCsvImportOpen] = useState(false)
+  const [deleting, setDeleting] = useState<Product | null>(null)
 
-  // Form State Configurações da Loja
-  const [deliveryFee, setDeliveryFee] = useState('')
-  const [minOrder, setMinOrder] = useState('')
-  const [estimatedTime, setEstimatedTime] = useState('')
-  const [phone, setPhone] = useState('')
-  const [whatsapp, setWhatsapp] = useState('')
-  const [isSavingSettings, setIsSavingSettings] = useState(false)
-
-  // Carregar dados da loja vinculada ao usuário
   useEffect(() => {
-    async function loadData() {
-      // Regra de segurança: comerciante só vê a própria loja; admin pode visualizar se tiver store_id ou primeira loja
-      const storeId = user?.store_id
-
-      if (!storeId && !isAdmin) {
-        setIsLoading(false)
-        return
-      }
-
-      // Se for admin testando sem store_id, busca a loja piloto Distribuidora Barbosa para inspeção
-      const targetStoreId = storeId || 'zc5y4y12z243toe'
-
-      setIsLoading(true)
-      const [storeData, prods, cats, ords] = await Promise.all([
-        getStoreById(targetStoreId),
-        getMerchantProducts(targetStoreId),
-        getCategories(),
-        getStoreOrders(targetStoreId),
-      ])
-
-      if (storeData) {
+    if (!user?.store_id) return
+    let cancelled = false
+    const load = async () => {
+      setLoading(true)
+      try {
+        const [storeData, prods, cats, ords] = await Promise.all([
+          getStoreById(user.store_id),
+          getMerchantProducts(user.store_id),
+          getAllStoreCategoriesAdmin(user.store_id),
+          getStoreOrders(user.store_id),
+        ])
+        if (cancelled) return
         setStore(storeData)
-        setDeliveryFee(storeData.delivery_fee ? String(storeData.delivery_fee) : '')
-        setMinOrder(storeData.min_order_value ? String(storeData.min_order_value) : '')
-        setEstimatedTime(storeData.estimated_time || '')
-        setPhone(storeData.phone || '')
-        setWhatsapp(storeData.whatsapp || '')
+        setProducts(prods)
+        setCategories(cats)
+        setOrders(ords)
+      } catch (err) {
+        if (!cancelled) {
+          toast({
+            variant: 'destructive',
+            title: 'Erro ao carregar painel',
+            description: err instanceof Error ? err.message : undefined,
+          })
+        }
+      } finally {
+        if (!cancelled) setLoading(false)
       }
-
-      setProducts(prods)
-      setCategories(cats)
-      setOrders(ords)
-      setIsLoading(false)
     }
+    load()
+    return () => {
+      cancelled = true
+    }
+  }, [user?.store_id, toast])
 
-    loadData()
-  }, [user, isAdmin])
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    if (!q) return products
+    return products.filter(
+      (p) =>
+        p.name.toLowerCase().includes(q) ||
+        (p.internal_code || '').toLowerCase().includes(q) ||
+        (p.barcode || '').toLowerCase().includes(q) ||
+        (p.brand || '').toLowerCase().includes(q),
+    )
+  }, [products, search])
 
-  // Abrir modal para novo produto
-  const handleOpenNewProduct = () => {
-    setEditingProduct(null)
-    setProdName('')
-    setProdDesc('')
-    setProdPrice('')
-    setProdPromoPrice('')
-    setProdUnit('un')
-    setProdStock('10')
-    setProdCategory(categories[0]?.id || '')
-    setProdBarcode('')
-    setProdIsDemo(true) // Default com marcação no piloto
-    setProdIsRegulated(false)
-    setProdBrand('')
-    setIsProductModalOpen(true)
+  const lowStockCount = useMemo(
+    () =>
+      products.filter(
+        (p) =>
+          p.track_stock !== false && (p.min_stock ?? 0) > 0 && (p.stock ?? 0) <= (p.min_stock ?? 0),
+      ).length,
+    [products],
+  )
+
+  const totalStockValue = useMemo(
+    () => products.reduce((sum, p) => sum + (p.stock ?? 0) * getEffectivePrice(p), 0),
+    [products],
+  )
+
+  const openNew = () => {
+    setEditing(null)
+    setFormOpen(true)
+  }
+  const openEdit = (p: Product) => {
+    setEditing(p)
+    setFormOpen(true)
   }
 
-  // Abrir modal para edição de produto
-  const handleEditProduct = (prod: Product) => {
-    setEditingProduct(prod)
-    setProdName(prod.name)
-    setProdDesc(prod.description || '')
-    setProdPrice(String(prod.price))
-    setProdPromoPrice(prod.promo_price ? String(prod.promo_price) : '')
-    setProdUnit(prod.unit)
-    setProdStock(prod.stock !== undefined ? String(prod.stock) : '0')
-    setProdCategory(prod.category_id || '')
-    setProdBarcode(prod.barcode || '')
-    setProdIsDemo(prod.is_demo || false)
-    setProdIsRegulated(prod.is_regulated || false)
-    setProdBrand(prod.brand || '')
-    setIsProductModalOpen(true)
+  const handleSaved = (saved: Product, isEdit: boolean) => {
+    setProducts((prev) =>
+      isEdit ? prev.map((p) => (p.id === saved.id ? saved : p)) : [saved, ...prev],
+    )
+    toast({ title: isEdit ? 'Produto atualizado' : 'Produto cadastrado', description: saved.name })
   }
 
-  // Salvar produto (criar ou atualizar)
-  const handleSaveProduct = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!store) return
+  const handleStockAdjusted = (upd: { id: string; name: string; stock: number }) => {
+    setProducts((prev) => prev.map((p) => (p.id === upd.id ? { ...p, stock: upd.stock } : p)))
+  }
 
-    setIsSavingProduct(true)
+  const askConfirm = (action: typeof confirmBulk) => {
+    if (selected.size === 0) {
+      toast({ variant: 'destructive', title: 'Selecione ao menos um produto' })
+      return
+    }
+    setConfirmBulk(action)
+  }
+
+  const applyBulk = async () => {
+    if (!confirmBulk) return
+    const ids = [...selected]
+    setBulkBusy(true)
     try {
-      const payload: Partial<Product> = {
-        store_id: store.id,
-        category_id: prodCategory || undefined,
-        name: prodName,
-        description: prodDesc,
-        price: parseFloat(prodPrice) || 0,
-        promo_price: prodPromoPrice ? parseFloat(prodPromoPrice) : undefined,
-        unit: prodUnit,
-        stock: parseInt(prodStock, 10) || 0,
-        barcode: prodBarcode,
-        brand: prodBrand,
-        is_demo: prodIsDemo,
-        is_regulated: prodIsRegulated,
-        is_available: true,
-        status: 'active',
+      if (confirmBulk === 'archive' || confirmBulk === 'activate' || confirmBulk === 'deactivate') {
+        const status =
+          confirmBulk === 'archive'
+            ? 'archived'
+            : confirmBulk === 'activate'
+              ? 'active'
+              : 'inactive'
+        await bulkUpdateProducts(ids, { status })
+        setProducts((prev) => prev.map((p) => (selected.has(p.id) ? { ...p, status } : p)))
+        toast({
+          title: `${ids.length} produto(s) ${confirmBulk === 'archive' ? 'arquivado(s)' : confirmBulk === 'activate' ? 'ativado(s)' : 'desativado(s)'}`,
+        })
+      } else if (confirmBulk === 'delete') {
+        const res = await bulkDeleteProducts(ids)
+        if (res.skipped_archived.length > 0) {
+          setProducts((prev) =>
+            prev.map((p) =>
+              res.skipped_archived.includes(p.id) ? { ...p, status: 'archived' } : p,
+            ),
+          )
+        }
+        setProducts((prev) => prev.filter((p) => !res.deleted.includes(p.id)))
+        toast({
+          title: 'Exclusão concluída',
+          description:
+            res.skipped_archived.length > 0
+              ? `${res.deleted.length} excluído(s); ${res.skipped_archived.length} arquivado(s) por terem histórico comercial.`
+              : `${res.deleted.length} excluído(s).`,
+        })
+      } else if (confirmBulk === 'duplicate') {
+        for (const id of ids) {
+          const src = products.find((p) => p.id === id)
+          if (!src) continue
+          const payload = formValuesToPayload({
+            ...emptyProductForm(),
+            name: src.name + ' (cópia)',
+            description: src.description || '',
+            description_full: src.description_full || '',
+            brand: src.brand || '',
+            store_category_id: src.store_category_id || '',
+            subcategory: src.subcategory || '',
+            internal_code: '', // código interno não é copiado — evita duplicidade CSV
+            barcode: '',
+            unit: src.unit,
+            custom_unit: src.custom_unit || '',
+            status: 'draft',
+            price: src.price,
+            promo_price: src.promo_price || 0,
+            promo_starts_date: '',
+            promo_ends_date: '',
+            stock: src.stock ?? 0,
+            min_stock: src.min_stock ?? 0,
+            track_stock: src.track_stock !== false,
+            is_available: src.is_available,
+            allow_fractional: !!src.allow_fractional,
+            estimated_weight: src.estimated_weight || 0,
+            final_weight: src.final_weight || 0,
+            lot: src.lot || '',
+            variations:
+              typeof src.variations === 'string'
+                ? JSON.parse(src.variations || '[]')
+                : src.variations || [],
+            complements:
+              typeof src.complements === 'string'
+                ? JSON.parse(src.complements || '[]')
+                : src.complements || [],
+          })
+          await createProduct({ store_id: store!.id, is_demo: !!src.is_demo, ...payload })
+        }
+        const fresh = await getMerchantProducts(store!.id)
+        setProducts(fresh)
+        toast({
+          title: `${ids.length} produto(s) duplicado(s) como rascunho`,
+          description: 'Revise e ative quando quiser.',
+        })
       }
-
-      if (editingProduct) {
-        const updated = await updateProduct(editingProduct.id, payload)
-        setProducts((prev) => prev.map((p) => (p.id === updated.id ? updated : p)))
-        logAudit('product.updated', 'products', updated.id, { name: updated.name })
-        toast({ title: 'Produto atualizado com sucesso!' })
-      } else {
-        const created = await createProduct(payload)
-        setProducts((prev) => [created, ...prev])
-        logAudit('product.created', 'products', created.id, { name: created.name })
-        toast({ title: 'Produto cadastrado com sucesso!' })
-      }
-
-      setIsProductModalOpen(false)
-    } catch (err: any) {
+      setSelected(new Set())
+      setConfirmBulk(null)
+    } catch (err) {
       toast({
         variant: 'destructive',
-        title: 'Erro ao salvar produto',
-        description: err?.message || 'Falha de validação ou permissão.',
+        title: 'Erro na ação em lote',
+        description: err instanceof Error ? err.message : undefined,
       })
     } finally {
-      setIsSavingProduct(false)
+      setBulkBusy(false)
     }
   }
 
-  // Excluir produto
-  const handleDeleteProduct = async (prod: Product) => {
-    if (!window.confirm(`Deseja realmente remover o produto "${prod.name}"?`)) return
+  const handleDeleteSingle = async () => {
+    if (!deleting) return
+    setBulkBusy(true)
     try {
-      await deleteProduct(prod.id)
-      setProducts((prev) => prev.filter((p) => p.id !== prod.id))
-      logAudit('product.deleted', 'products', prod.id, { name: prod.name })
-      toast({ title: 'Produto excluído com sucesso.' })
-    } catch (err: any) {
+      const ok = await deleteProduct(deleting.id)
+      if (ok) {
+        setProducts((prev) => prev.filter((p) => p.id !== deleting.id))
+        toast({ title: 'Produto excluído', description: deleting.name })
+      } else {
+        toast({
+          variant: 'destructive',
+          title: 'Não foi possível excluir',
+          description: 'O produto pode ter histórico comercial.',
+        })
+      }
+    } catch (err) {
       toast({
         variant: 'destructive',
         title: 'Erro ao excluir',
-        description: err?.message,
-      })
-    }
-  }
-
-  // Salvar configurações comerciais da loja
-  const handleSaveStoreSettings = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!store) return
-
-    setIsSavingSettings(true)
-    try {
-      const updated = await updateStore(store.id, {
-        delivery_fee: deliveryFee ? parseFloat(deliveryFee) : 0,
-        min_order_value: minOrder ? parseFloat(minOrder) : 0,
-        estimated_time: estimatedTime,
-        phone,
-        whatsapp,
-      })
-      setStore(updated)
-      logAudit('store.settings_updated', 'stores', store.id)
-      toast({ title: 'Configurações da loja salvas com sucesso!' })
-    } catch (err: any) {
-      toast({
-        variant: 'destructive',
-        title: 'Erro ao salvar configurações',
-        description: err?.message,
+        description: err instanceof Error ? err.message : undefined,
       })
     } finally {
-      setIsSavingSettings(false)
+      setBulkBusy(false)
+      setDeleting(null)
     }
   }
 
-  if (isLoading) {
+  const handleExportCSV = () => {
+    const csv = productsToCSV(products)
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `borali-produtos-${store?.slug || 'loja'}-${new Date().toISOString().slice(0, 10)}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+    toast({ title: 'CSV exportado', description: `${products.length} produto(s).` })
+  }
+
+  const toggleAll = () => {
+    setSelected((prev) =>
+      prev.size === filtered.length ? new Set() : new Set(filtered.map((p) => p.id)),
+    )
+  }
+  const toggleOne = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const photoUrl = (p: Product, filename: string) =>
+    `${pb.baseUrl}/api/files/products/${p.id}/${filename}`
+
+  if (!user?.store_id) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#F5F7FA]">
-        <div className="text-center space-y-2">
-          <div className="w-10 h-10 border-4 border-[#1754AE] border-t-transparent rounded-full animate-spin mx-auto" />
-          <p className="text-xs text-slate-500">Carregando painel do comerciante...</p>
-        </div>
+      <div className="container mx-auto px-4 py-16 text-center">
+        <Store className="w-12 h-12 mx-auto text-slate-300 mb-4" />
+        <h1 className="text-xl font-bold text-slate-900 mb-2">Nenhuma loja vinculada</h1>
+        <p className="text-sm text-slate-500 mb-6">
+          Sua conta ainda não está vinculada a um estabelecimento.
+        </p>
+        <Button asChild variant="outline">
+          <Link to="/">Voltar ao início</Link>
+        </Button>
       </div>
     )
   }
 
-  if (!store) {
+  const statusBadge = (p: Product) => {
+    if (p.status === 'archived')
+      return (
+        <Badge variant="outline" className="text-[10px] bg-slate-100 text-slate-500">
+          Arquivado
+        </Badge>
+      )
+    if (p.status === 'inactive' || !p.is_available)
+      return (
+        <Badge variant="outline" className="text-[10px] bg-red-50 text-red-700">
+          Indisponível
+        </Badge>
+      )
+    if (p.status === 'draft')
+      return (
+        <Badge variant="outline" className="text-[10px] bg-amber-50 text-amber-700">
+          Rascunho
+        </Badge>
+      )
+    const promo = getPromoInfo(p)
+    if (promo?.active)
+      return (
+        <Badge variant="outline" className="text-[10px] bg-emerald-50 text-emerald-700">
+          Em promoção ({promo.discountPct}%)
+        </Badge>
+      )
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#F5F7FA] p-4">
-        <div className="bg-white p-8 rounded-2xl border border-slate-200 text-center max-w-md shadow-sm space-y-4">
-          <AlertCircle className="w-12 h-12 text-amber-500 mx-auto" />
-          <h2 className="text-xl font-bold text-slate-900">Nenhum estabelecimento vinculado</h2>
-          <p className="text-xs text-slate-500 leading-relaxed">
-            Sua conta de usuário não possui vínculo com nenhuma loja ativa. Entre em contato com o
-            administrador geral da plataforma Borali.
-          </p>
-          <Button onClick={() => navigate('/obidos')} className="bg-[#1754AE] text-xs">
-            Voltar para o Marketplace
-          </Button>
-        </div>
-      </div>
+      <Badge variant="outline" className="text-[10px] bg-blue-50 text-[#1754AE]">
+        Ativo
+      </Badge>
     )
   }
 
   return (
-    <div className="min-h-screen bg-[#F5F7FA] py-8">
-      <div className="max-w-7xl mx-auto px-4 space-y-6">
-        {/* CABEÇALHO DO PAINEL */}
-        <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="flex items-center gap-4">
-            <div className="w-14 h-14 rounded-2xl bg-blue-50 text-[#1754AE] flex items-center justify-center border border-blue-100 flex-shrink-0">
-              <Store className="w-7 h-7" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-2xl font-bold text-slate-900">{store.name}</h1>
-                <Badge className="bg-emerald-50 text-emerald-700 border-emerald-200 text-xs">
-                  {store.status === 'approved' ? 'Aprovada' : store.status}
-                </Badge>
-                {store.is_demo && (
-                  <Badge
-                    variant="outline"
-                    className="bg-red-50 text-red-700 border-red-300 text-xs font-bold"
-                  >
-                    PILOTO DEMO
-                  </Badge>
-                )}
-              </div>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Painel de Gestão da Loja Virtual • {store.address_neighborhood || 'Centro'},
-                Óbidos/PA
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => navigate(`/obidos/${store.slug}`)}
-              className="text-xs"
-            >
-              Ver Minha Loja Virtual
-            </Button>
-            <Button
-              size="sm"
-              onClick={handleOpenNewProduct}
-              className="bg-[#1754AE] hover:bg-[#12428C] text-white text-xs font-semibold"
-            >
-              <Plus className="w-4 h-4 mr-1.5" />
-              Novo Produto
-            </Button>
-          </div>
+    <div className="container mx-auto px-4 py-6 pb-24 md:pb-6">
+      {/* Header */}
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-6">
+        <div>
+          <h1 className="text-xl font-bold text-slate-900 flex items-center gap-2">
+            <Store className="w-5 h-5 text-[#1754AE]" /> Painel do Comerciante
+          </h1>
+          <p className="text-xs text-slate-500">
+            {store?.name} — gestão de catálogo, promoções e estoque
+          </p>
         </div>
-
-        {/* METRICS CARDS (Visão Geral da v0.1) */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <Card className="border-slate-200 bg-white">
-            <CardContent className="p-5 flex items-center justify-between">
-              <div>
-                <p className="text-xs text-slate-500 font-medium">Produtos no Catálogo</p>
-                <h3 className="text-2xl font-bold text-slate-900 mt-1">{products.length}</h3>
-              </div>
-              <div className="w-10 h-10 rounded-xl bg-blue-50 text-[#1754AE] flex items-center justify-center">
-                <Package className="w-5 h-5" />
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="border-slate-200 bg-white">
-            <CardContent className="p-5 flex items-center justify-between">
-              <div>
-                <p className="text-xs text-slate-500 font-medium">Taxa de Entrega</p>
-                <h3 className="text-2xl font-bold text-slate-900 mt-1">
-                  R${' '}
-                  {Number(store.delivery_fee || 0)
-                    .toFixed(2)
-                    .replace('.', ',')}
-                </h3>
-              </div>
-              <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
-                <Bike className="w-5 h-5" />
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="border-slate-200 bg-white">
-            <CardContent className="p-5 flex items-center justify-between">
-              <div>
-                <p className="text-xs text-slate-500 font-medium">Tempo Médio</p>
-                <h3 className="text-2xl font-bold text-slate-900 mt-1">
-                  {store.estimated_time || '30-50 min'}
-                </h3>
-              </div>
-              <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center">
-                <Clock className="w-5 h-5" />
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="border-slate-200 bg-white">
-            <CardContent className="p-5 flex items-center justify-between">
-              <div>
-                <p className="text-xs text-slate-500 font-medium">Pedidos (Estrutura)</p>
-                <h3 className="text-2xl font-bold text-slate-900 mt-1">{orders.length}</h3>
-              </div>
-              <div className="w-10 h-10 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center">
-                <ShoppingBag className="w-5 h-5" />
-              </div>
-            </CardContent>
-          </Card>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setCatManagerOpen(true)}
+            className="text-xs"
+          >
+            <FolderTree className="w-3.5 h-3.5 mr-1" /> Categorias
+          </Button>
+          <Button variant="outline" size="sm" onClick={handleExportCSV} className="text-xs">
+            <Download className="w-3.5 h-3.5 mr-1" /> Exportar CSV
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setCsvImportOpen(true)}
+            className="text-xs"
+          >
+            <FileUp className="w-3.5 h-3.5 mr-1" /> Importar CSV
+          </Button>
+          <Button
+            size="sm"
+            onClick={openNew}
+            className="bg-[#1754AE] hover:bg-[#12428C] text-white text-xs"
+          >
+            <Plus className="w-3.5 h-3.5 mr-1" /> Novo produto
+          </Button>
         </div>
-
-        {/* ABAS DO PAINEL DO COMERCIANTE */}
-        <Tabs defaultValue="products" className="w-full">
-          <TabsList className="bg-white border border-slate-200 p-1 rounded-xl shadow-sm mb-6">
-            <TabsTrigger value="products" className="text-xs font-semibold px-4 py-2">
-              <Package className="w-4 h-4 mr-1.5" />
-              Produtos & Estoque
-            </TabsTrigger>
-            <TabsTrigger value="orders" className="text-xs font-semibold px-4 py-2">
-              <ShoppingBag className="w-4 h-4 mr-1.5" />
-              Pedidos (Estrutura v0.1)
-            </TabsTrigger>
-            <TabsTrigger value="settings" className="text-xs font-semibold px-4 py-2">
-              <Settings className="w-4 h-4 mr-1.5" />
-              Configurações & Entrega
-            </TabsTrigger>
-          </TabsList>
-
-          {/* TAB 1: PRODUTOS & ESTOQUE */}
-          <TabsContent value="products" className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="font-bold text-slate-900 text-lg">Catálogo de Produtos</h3>
-                <p className="text-xs text-slate-500">
-                  Gerencie preços, estoque, unidades de medida e status dos seus itens
-                </p>
-              </div>
-              <Button
-                size="sm"
-                onClick={handleOpenNewProduct}
-                className="bg-[#1754AE] text-white text-xs"
-              >
-                <Plus className="w-3.5 h-3.5 mr-1" />
-                Adicionar Produto
-              </Button>
-            </div>
-
-            <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
-                  <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold uppercase tracking-wider text-[10px]">
-                    <tr>
-                      <th className="p-4">Produto</th>
-                      <th className="p-4">Unidade</th>
-                      <th className="p-4">Preço Normal</th>
-                      <th className="p-4">Preço Promo</th>
-                      <th className="p-4">Estoque</th>
-                      <th className="p-4">Tags</th>
-                      <th className="p-4 text-right">Ações</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {products.length === 0 ? (
-                      <tr>
-                        <td colSpan={7} className="p-8 text-center text-slate-400">
-                          Nenhum produto cadastrado ainda. Clique em "Novo Produto" para iniciar.
-                        </td>
-                      </tr>
-                    ) : (
-                      products.map((prod) => (
-                        <tr key={prod.id} className="hover:bg-slate-50 transition">
-                          <td className="p-4">
-                            <div className="font-bold text-slate-900">{prod.name}</div>
-                            {prod.description && (
-                              <div className="text-[11px] text-slate-400 line-clamp-1">
-                                {prod.description}
-                              </div>
-                            )}
-                          </td>
-                          <td className="p-4 font-mono font-medium">{prod.unit}</td>
-                          <td className="p-4 font-medium">
-                            R$ {Number(prod.price).toFixed(2).replace('.', ',')}
-                          </td>
-                          <td className="p-4">
-                            {prod.promo_price ? (
-                              <span className="font-bold text-[#E63239]">
-                                R$ {Number(prod.promo_price).toFixed(2).replace('.', ',')}
-                              </span>
-                            ) : (
-                              <span className="text-slate-400">-</span>
-                            )}
-                          </td>
-                          <td className="p-4 font-semibold">{prod.stock ?? 0}</td>
-                          <td className="p-4 space-x-1">
-                            {prod.is_demo && (
-                              <Badge
-                                variant="outline"
-                                className="text-[10px] bg-red-50 text-red-700 border-red-200 font-bold"
-                              >
-                                DEMO
-                              </Badge>
-                            )}
-                            {prod.is_regulated && (
-                              <Badge
-                                variant="outline"
-                                className="text-[10px] bg-amber-50 text-amber-700 border-amber-200"
-                              >
-                                Regulado
-                              </Badge>
-                            )}
-                          </td>
-                          <td className="p-4 text-right space-x-1">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => handleEditProduct(prod)}
-                              className="h-8 w-8 p-0"
-                            >
-                              <Edit2 className="w-3.5 h-3.5 text-slate-600" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => handleDeleteProduct(prod)}
-                              className="h-8 w-8 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </Button>
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </TabsContent>
-
-          {/* TAB 2: PEDIDOS (ESTRUTURA V0.1) */}
-          <TabsContent value="orders" className="space-y-4">
-            <div className="p-4 bg-blue-50 border border-blue-200 rounded-2xl flex items-start gap-3">
-              <Info className="w-5 h-5 text-[#1754AE] flex-shrink-0 mt-0.5" />
-              <div className="text-xs text-blue-900 leading-relaxed">
-                <strong>Estrutura de Pedidos v0.1:</strong> O modelo de dados completo de pedidos
-                (identificação única, status: Aguardando confirmação, Confirmado, Em preparação,
-                Pronto para retirada, Saiu para entrega, Entregue, Cancelado) está implementado e
-                isolado por loja. Os fluxos interativos de finalização de compra e disparo de
-                pedidos entram na rodada <strong>v0.3</strong>.
-              </div>
-            </div>
-
-            <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center space-y-3">
-              <ShoppingBag className="w-12 h-12 text-slate-300 mx-auto" />
-              <h4 className="font-bold text-slate-800 text-sm">
-                Nenhum pedido recebido no momento
-              </h4>
-              <p className="text-xs text-slate-400 max-w-sm mx-auto">
-                Assim que os clientes realizarem pedidos na sua loja virtual, eles aparecerão aqui
-                com status em tempo real.
-              </p>
-            </div>
-          </TabsContent>
-
-          {/* TAB 3: CONFIGURAÇÕES & ENTREGA */}
-          <TabsContent value="settings">
-            <Card className="border-slate-200 bg-white">
-              <CardHeader>
-                <CardTitle className="text-base text-slate-900">
-                  Configurações Comerciais e Entrega
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <form onSubmit={handleSaveStoreSettings} className="space-y-4 max-w-xl">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-semibold text-slate-700">
-                        Taxa de Entrega Padrão (R$)
-                      </Label>
-                      <Input
-                        type="number"
-                        step="0.50"
-                        value={deliveryFee}
-                        onChange={(e) => setDeliveryFee(e.target.value)}
-                        className="text-xs"
-                      />
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-semibold text-slate-700">
-                        Pedido Mínimo (R$)
-                      </Label>
-                      <Input
-                        type="number"
-                        step="1.00"
-                        value={minOrder}
-                        onChange={(e) => setMinOrder(e.target.value)}
-                        className="text-xs"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-semibold text-slate-700">
-                      Tempo Estimado de Entrega
-                    </Label>
-                    <Input
-                      type="text"
-                      placeholder="ex: 30-50 min"
-                      value={estimatedTime}
-                      onChange={(e) => setEstimatedTime(e.target.value)}
-                      className="text-xs"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-semibold text-slate-700">
-                        Telefone Comercial
-                      </Label>
-                      <Input
-                        type="text"
-                        value={phone}
-                        onChange={(e) => setPhone(e.target.value)}
-                        className="text-xs"
-                      />
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-semibold text-slate-700">
-                        WhatsApp para Pedidos
-                      </Label>
-                      <Input
-                        type="text"
-                        value={whatsapp}
-                        onChange={(e) => setWhatsapp(e.target.value)}
-                        className="text-xs"
-                      />
-                    </div>
-                  </div>
-
-                  <Button
-                    type="submit"
-                    disabled={isSavingSettings}
-                    className="bg-[#1754AE] hover:bg-[#12428C] text-white text-xs font-bold"
-                  >
-                    {isSavingSettings ? 'Salvando...' : 'Salvar Configurações'}
-                  </Button>
-                </form>
-              </CardContent>
-            </Card>
-          </TabsContent>
-        </Tabs>
       </div>
 
-      {/* MODAL DE CADASTRO / EDIÇÃO DE PRODUTO */}
-      <Dialog open={isProductModalOpen} onOpenChange={setIsProductModalOpen}>
-        <DialogContent className="max-w-lg bg-white">
+      {/* Alertas */}
+      {lowStockCount > 0 && (
+        <Alert className="mb-4 border-amber-200 bg-amber-50">
+          <TriangleAlert className="h-4 w-4 text-amber-600" />
+          <AlertTitle className="text-xs font-semibold text-amber-800">Estoque baixo</AlertTitle>
+          <AlertDescription className="text-[11px] text-amber-700">
+            {lowStockCount} produto(s) atingiram o estoque mínimo. Confira a lista abaixo e reponha.
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {/* Resumo */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+        <Card>
+          <CardContent className="p-3">
+            <p className="text-[10px] text-slate-500 uppercase tracking-wide">Produtos ativos</p>
+            <p className="text-lg font-bold text-slate-900">
+              {products.filter((p) => p.status === 'active').length}
+            </p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-3">
+            <p className="text-[10px] text-slate-500 uppercase tracking-wide">Em promoção</p>
+            <p className="text-lg font-bold text-[#E63239]">
+              {products.filter((p) => isPromoActive(p)).length}
+            </p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-3">
+            <p className="text-[10px] text-slate-500 uppercase tracking-wide">Valor em estoque</p>
+            <p className="text-lg font-bold text-slate-900">{formatBRL(totalStockValue)}</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-3">
+            <p className="text-[10px] text-slate-500 uppercase tracking-wide">Pedidos (v0.3)</p>
+            <p className="text-lg font-bold text-slate-400">{orders.length}</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Busca + ações em lote */}
+      <div className="flex flex-col sm:flex-row gap-2 mb-4">
+        <div className="relative flex-1">
+          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Buscar por nome, código interno, EAN..."
+            className="pl-9 text-xs"
+          />
+        </div>
+        {selected.size > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-xs"
+              onClick={() => askConfirm('activate')}
+            >
+              <Power className="w-3.5 h-3.5 mr-1 text-emerald-600" />
+              Ativar
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-xs"
+              onClick={() => askConfirm('deactivate')}
+            >
+              <Power className="w-3.5 h-3.5 mr-1 text-slate-500" />
+              Desativar
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-xs"
+              onClick={() => askConfirm('archive')}
+            >
+              <Archive className="w-3.5 h-3.5 mr-1 text-slate-500" />
+              Arquivar
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-xs"
+              onClick={() => askConfirm('duplicate')}
+            >
+              <Copy className="w-3.5 h-3.5 mr-1 text-[#1754AE]" />
+              Duplicar
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-xs text-red-600 border-red-200"
+              onClick={() => askConfirm('delete')}
+            >
+              <Trash2 className="w-3.5 h-3.5 mr-1" />
+              Excluir
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="text-xs"
+              onClick={() => setSelected(new Set())}
+            >
+              Limpar ({selected.size})
+            </Button>
+          </div>
+        )}
+      </div>
+
+      {/* Lista de produtos */}
+      {loading ? (
+        <div className="flex justify-center py-16">
+          <Loader2 className="w-6 h-6 animate-spin text-[#1754AE]" />
+        </div>
+      ) : filtered.length === 0 ? (
+        <Card>
+          <CardContent className="py-16 text-center">
+            <Package className="w-10 h-10 mx-auto text-slate-300 mb-3" />
+            <p className="text-sm font-medium text-slate-700 mb-1">
+              {products.length === 0
+                ? 'Nenhum produto cadastrado'
+                : 'Nada encontrado para esta busca'}
+            </p>
+            <p className="text-xs text-slate-500 mb-4">
+              Cadastre seu primeiro produto para aparecer na loja virtual.
+            </p>
+            <Button
+              size="sm"
+              onClick={openNew}
+              className="bg-[#1754AE] hover:bg-[#12428C] text-white"
+            >
+              <Plus className="w-3.5 h-3.5 mr-1" /> Cadastrar produto
+            </Button>
+          </CardContent>
+        </Card>
+      ) : (
+        <>
+          {/* Desktop: tabela */}
+          <div className="hidden md:block rounded-lg border bg-white overflow-hidden">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-10">
+                    <input
+                      type="checkbox"
+                      checked={selected.size === filtered.length && filtered.length > 0}
+                      onChange={toggleAll}
+                      className="rounded"
+                      aria-label="Selecionar todos"
+                    />
+                  </TableHead>
+                  <TableHead className="text-xs">Produto</TableHead>
+                  <TableHead className="text-xs">Preço</TableHead>
+                  <TableHead className="text-xs">Estoque</TableHead>
+                  <TableHead className="text-xs">Status</TableHead>
+                  <TableHead className="text-xs text-right">Ações</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filtered.map((p) => {
+                  const eff = getEffectivePrice(p)
+                  const low =
+                    p.track_stock !== false &&
+                    (p.min_stock ?? 0) > 0 &&
+                    (p.stock ?? 0) <= (p.min_stock ?? 0)
+                  return (
+                    <TableRow key={p.id} className={selected.has(p.id) ? 'bg-blue-50/50' : ''}>
+                      <TableCell>
+                        <input
+                          type="checkbox"
+                          checked={selected.has(p.id)}
+                          onChange={() => toggleOne(p.id)}
+                          className="rounded"
+                          aria-label={`Selecionar ${p.name}`}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          {p.photos?.[0] ? (
+                            <img
+                              src={photoUrl(p, p.photos[0])}
+                              alt=""
+                              className="w-9 h-9 rounded object-cover border"
+                            />
+                          ) : (
+                            <div className="w-9 h-9 rounded bg-slate-100 flex items-center justify-center">
+                              <Package className="w-4 h-4 text-slate-300" />
+                            </div>
+                          )}
+                          <div className="min-w-0">
+                            <p className="text-xs font-medium text-slate-900 truncate max-w-[220px]">
+                              {p.name}
+                            </p>
+                            <p className="text-[10px] text-slate-400">
+                              {p.unit}
+                              {p.internal_code ? ` · cód. ${p.internal_code}` : ''}
+                            </p>
+                          </div>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        {eff < p.price ? (
+                          <div className="text-xs">
+                            <span className="line-through text-slate-400 mr-1">
+                              {formatBRL(p.price)}
+                            </span>
+                            <span className="font-bold text-[#E63239]">{formatBRL(eff)}</span>
+                          </div>
+                        ) : (
+                          <span className="text-xs font-semibold text-slate-900">
+                            {formatBRL(p.price)}
+                          </span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {p.track_stock === false ? (
+                          <span className="text-[10px] text-slate-400">Sob encomenda</span>
+                        ) : (
+                          <span
+                            className={`text-xs font-semibold ${low ? 'text-amber-600' : 'text-slate-700'}`}
+                          >
+                            {p.stock ?? 0} {p.unit}
+                          </span>
+                        )}
+                      </TableCell>
+                      <TableCell>{statusBadge(p)}</TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 w-7 p-0"
+                            onClick={() => openEdit(p)}
+                            title="Editar completo"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 w-7 p-0"
+                            onClick={() => {
+                              setStockProduct(p)
+                              setStockOpen(true)
+                            }}
+                            title="Estoque"
+                          >
+                            <Package className="w-3.5 h-3.5" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 w-7 p-0"
+                            onClick={() => setDeleting(p)}
+                            title="Excluir"
+                          >
+                            <Trash2 className="w-3.5 h-3.5 text-red-500" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
+              </TableBody>
+            </Table>
+          </div>
+
+          {/* Mobile: cards */}
+          <div className="md:hidden space-y-2">
+            <label className="flex items-center gap-2 text-xs text-slate-600 px-1">
+              <input
+                type="checkbox"
+                checked={selected.size === filtered.length && filtered.length > 0}
+                onChange={toggleAll}
+                className="rounded"
+              />
+              Selecionar todos ({filtered.length})
+            </label>
+            {filtered.map((p) => {
+              const eff = getEffectivePrice(p)
+              const low =
+                p.track_stock !== false &&
+                (p.min_stock ?? 0) > 0 &&
+                (p.stock ?? 0) <= (p.min_stock ?? 0)
+              return (
+                <Card key={p.id} className={selected.has(p.id) ? 'border-[#1754AE]' : ''}>
+                  <CardContent className="p-3">
+                    <div className="flex items-start gap-2">
+                      <input
+                        type="checkbox"
+                        checked={selected.has(p.id)}
+                        onChange={() => toggleOne(p.id)}
+                        className="rounded mt-1"
+                        aria-label={`Selecionar ${p.name}`}
+                      />
+                      {p.photos?.[0] ? (
+                        <img
+                          src={photoUrl(p, p.photos[0])}
+                          alt=""
+                          className="w-12 h-12 rounded object-cover border"
+                        />
+                      ) : (
+                        <div className="w-12 h-12 rounded bg-slate-100 flex items-center justify-center">
+                          <Package className="w-5 h-5 text-slate-300" />
+                        </div>
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-start justify-between gap-2">
+                          <p className="text-xs font-semibold text-slate-900 truncate">{p.name}</p>
+                          {statusBadge(p)}
+                        </div>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          {eff < p.price ? (
+                            <>
+                              <span className="text-[10px] line-through text-slate-400">
+                                {formatBRL(p.price)}
+                              </span>
+                              <span className="text-xs font-bold text-[#E63239]">
+                                {formatBRL(eff)}
+                              </span>
+                            </>
+                          ) : (
+                            <span className="text-xs font-bold text-slate-900">
+                              {formatBRL(p.price)}
+                            </span>
+                          )}
+                          <span className="text-[10px] text-slate-400">· {p.unit}</span>
+                        </div>
+                        {p.track_stock !== false && (
+                          <p
+                            className={`text-[10px] mt-0.5 ${low ? 'text-amber-600 font-semibold' : 'text-slate-400'}`}
+                          >
+                            Estoque: {p.stock ?? 0}
+                            {low ? ' ⚠️ baixo' : ''}
+                          </p>
+                        )}
+                        <div className="flex gap-1.5 mt-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-7 text-[10px] px-2"
+                            onClick={() => openEdit(p)}
+                          >
+                            <Pencil className="w-3 h-3 mr-0.5" />
+                            Editar
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-7 text-[10px] px-2"
+                            onClick={() => {
+                              setStockProduct(p)
+                              setStockOpen(true)
+                            }}
+                          >
+                            <Package className="w-3 h-3 mr-0.5" />
+                            Estoque
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-7 text-[10px] px-2 text-red-600"
+                            onClick={() => setDeleting(p)}
+                          >
+                            <Trash2 className="w-3 h-3 mr-0.5" />
+                            Excluir
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              )
+            })}
+          </div>
+        </>
+      )}
+
+      {/* Modais */}
+      <ProductFormModal
+        open={formOpen}
+        onOpenChange={setFormOpen}
+        storeId={store!.id}
+        storeCategories={categories}
+        editing={editing}
+        onSaved={handleSaved}
+      />
+      <CategoryManagerModal
+        open={catManagerOpen}
+        onOpenChange={setCatManagerOpen}
+        storeId={store!.id}
+        categories={categories}
+        onChange={setCategories}
+      />
+      <StockAdjustModal
+        open={stockOpen}
+        onOpenChange={setStockOpen}
+        product={stockProduct}
+        onAdjusted={handleStockAdjusted}
+      />
+      <CSVImportModal
+        open={csvImportOpen}
+        onOpenChange={setCsvImportOpen}
+        storeId={store!.id}
+        existing={products}
+        categories={categories}
+        onImported={async () => {
+          const fresh = await getMerchantProducts(store!.id)
+          setProducts(fresh)
+        }}
+      />
+
+      {/* Edição rápida (fotos / variações / complementos) */}
+      {quickEdit && (
+        <Dialog open={!!quickEdit} onOpenChange={(o) => !o && setQuickEdit(null)}>
+          <DialogContent className="max-w-lg bg-white max-h-[85vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="text-sm font-bold text-slate-900">
+                {quickEdit.section === 'photos'
+                  ? 'Fotos'
+                  : quickEdit.section === 'variations'
+                    ? 'Variações'
+                    : 'Complementos'}{' '}
+                — {quickEdit.product.name}
+              </DialogTitle>
+            </DialogHeader>
+            {quickEdit.section === 'photos' && (
+              <PhotosEditor
+                editing={quickEdit.product}
+                existingPhotos={(quickEdit.product.photos as unknown as string[]) || []}
+                setExistingPhotos={(fn) => {
+                  const next =
+                    typeof fn === 'function'
+                      ? fn((quickEdit.product.photos as unknown as string[]) || [])
+                      : fn
+                  setProducts((prev) =>
+                    prev.map((p) => (p.id === quickEdit.product.id ? { ...p, photos: next } : p)),
+                  )
+                }}
+                mainPhoto={(quickEdit.product.main_photo as string) || ''}
+                setMainPhoto={(v) => {
+                  const val =
+                    typeof v === 'function' ? v((quickEdit.product.main_photo as string) || '') : v
+                  setProducts((prev) =>
+                    prev.map((p) =>
+                      p.id === quickEdit.product.id ? { ...p, main_photo: val } : p,
+                    ),
+                  )
+                }}
+                newPhotos={[]}
+                setNewPhotos={() => {}}
+                uploading={false}
+                onUpload={async () => {}}
+              />
+            )}
+            {(quickEdit.section === 'variations' || quickEdit.section === 'complements') && (
+              <div className="space-y-3">
+                {(quickEdit.section === 'variations' ? VariationsEditor : ComplementsEditor) &&
+                  null}
+                <VariationsEditor
+                  variations={
+                    typeof quickEdit.product.variations === 'string'
+                      ? JSON.parse(quickEdit.product.variations || '[]')
+                      : quickEdit.product.variations || []
+                  }
+                  onChange={(arr) => {
+                    setProducts((prev) =>
+                      prev.map((p) =>
+                        p.id === quickEdit.product.id
+                          ? { ...p, variations: JSON.stringify(arr) }
+                          : p,
+                      ),
+                    )
+                  }}
+                />
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {/* Confirmação em lote */}
+      <Dialog open={!!confirmBulk} onOpenChange={(o) => !o && setConfirmBulk(null)}>
+        <DialogContent className="max-w-sm bg-white">
           <DialogHeader>
-            <DialogTitle className="text-base font-bold text-slate-900">
-              {editingProduct ? 'Editar Produto' : 'Cadastrar Novo Produto'}
+            <DialogTitle className="text-sm font-bold text-slate-900">
+              Confirmar ação em lote
             </DialogTitle>
             <DialogDescription className="text-xs text-slate-500">
-              Preencha os dados do produto conforme as especificações de comércio local.
+              {selected.size} produto(s) serão{' '}
+              {confirmBulk === 'archive'
+                ? 'arquivados'
+                : confirmBulk === 'activate'
+                  ? 'ativados'
+                  : confirmBulk === 'deactivate'
+                    ? 'desativados'
+                    : confirmBulk === 'duplicate'
+                      ? 'duplicados como rascunho'
+                      : 'processados para exclusão'}
+              .
             </DialogDescription>
           </DialogHeader>
+          {confirmBulk === 'delete' && (
+            <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2">
+              Produtos com histórico comercial (pedidos) não são excluídos: são arquivados
+              automaticamente.
+            </p>
+          )}
+          {confirmBulk === 'duplicate' && (
+            <p className="text-[11px] text-blue-700 bg-blue-50 border border-blue-200 rounded-lg p-2">
+              Cada cópia nasce como rascunho, sem código interno/EAN (evita duplicidade) e sem
+              promoção.
+            </p>
+          )}
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setConfirmBulk(null)}>
+              Cancelar
+            </Button>
+            <Button
+              size="sm"
+              onClick={applyBulk}
+              disabled={bulkBusy}
+              className={
+                confirmBulk === 'delete'
+                  ? 'bg-red-600 hover:bg-red-700 text-white'
+                  : 'bg-[#1754AE] hover:bg-[#12428C] text-white'
+              }
+            >
+              {bulkBusy ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : null}
+              Confirmar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
-          <form onSubmit={handleSaveProduct} className="space-y-3.5 py-2">
-            <div className="space-y-1">
-              <Label className="text-xs font-semibold text-slate-700">Nome do Produto *</Label>
-              <Input
-                required
-                value={prodName}
-                onChange={(e) => setProdName(e.target.value)}
-                placeholder="ex: [DEMO] Água Mineral 500ml"
-                className="text-xs"
-              />
-            </div>
-
-            <div className="space-y-1">
-              <Label className="text-xs font-semibold text-slate-700">Descrição</Label>
-              <Input
-                value={prodDesc}
-                onChange={(e) => setProdDesc(e.target.value)}
-                placeholder="Breve descrição do produto"
-                className="text-xs"
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <Label className="text-xs font-semibold text-slate-700">Preço Normal (R$) *</Label>
-                <Input
-                  type="number"
-                  step="0.01"
-                  required
-                  value={prodPrice}
-                  onChange={(e) => setProdPrice(e.target.value)}
-                  placeholder="0,00"
-                  className="text-xs"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <Label className="text-xs font-semibold text-slate-700">
-                  Preço Promocional (R$)
-                </Label>
-                <Input
-                  type="number"
-                  step="0.01"
-                  value={prodPromoPrice}
-                  onChange={(e) => setProdPromoPrice(e.target.value)}
-                  placeholder="Opcional"
-                  className="text-xs"
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <Label className="text-xs font-semibold text-slate-700">Unidade de Medida *</Label>
-                <select
-                  value={prodUnit}
-                  onChange={(e) => setProdUnit(e.target.value as ProductUnit)}
-                  className="w-full h-9 rounded-md border border-slate-200 text-xs px-2 bg-white"
-                >
-                  <option value="un">Unidade (un)</option>
-                  <option value="kg">Quilo (kg)</option>
-                  <option value="g">Grama (g)</option>
-                  <option value="l">Litro (l)</option>
-                  <option value="ml">Mililitro (ml)</option>
-                  <option value="cx">Caixa (cx)</option>
-                  <option value="pct">Pacote (pct)</option>
-                  <option value="fardo">Fardo (fardo)</option>
-                  <option value="duzia">Dúzia (duzia)</option>
-                </select>
-              </div>
-
-              <div className="space-y-1">
-                <Label className="text-xs font-semibold text-slate-700">Estoque</Label>
-                <Input
-                  type="number"
-                  value={prodStock}
-                  onChange={(e) => setProdStock(e.target.value)}
-                  placeholder="0"
-                  className="text-xs"
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <Label className="text-xs font-semibold text-slate-700">Código de Barras</Label>
-                <Input
-                  value={prodBarcode}
-                  onChange={(e) => setProdBarcode(e.target.value)}
-                  placeholder="Opcional (EAN)"
-                  className="text-xs"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <Label className="text-xs font-semibold text-slate-700">Marca</Label>
-                <Input
-                  value={prodBrand}
-                  onChange={(e) => setProdBrand(e.target.value)}
-                  placeholder="ex: Piloto Regional"
-                  className="text-xs"
-                />
-              </div>
-            </div>
-
-            <div className="pt-2 space-y-2 border-t border-slate-100">
-              <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={prodIsDemo}
-                  onChange={(e) => setProdIsDemo(e.target.checked)}
-                  className="rounded text-[#1754AE]"
-                />
-                <span>Identificar claramente como Dado Demonstrativo (DEMO)</span>
-              </label>
-
-              <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={prodIsRegulated}
-                  onChange={(e) => setProdIsRegulated(e.target.checked)}
-                  className="rounded text-[#1754AE]"
-                />
-                <span>Produto sujeito a regulamentação (ex: bebidas alcoólicas)</span>
-              </label>
-            </div>
-
-            <DialogFooter className="pt-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setIsProductModalOpen(false)}
-              >
-                Cancelar
-              </Button>
-              <Button
-                type="submit"
-                size="sm"
-                disabled={isSavingProduct}
-                className="bg-[#1754AE] text-white"
-              >
-                {isSavingProduct ? 'Salvando...' : 'Salvar Produto'}
-              </Button>
-            </DialogFooter>
-          </form>
+      {/* Confirmação de exclusão única */}
+      <Dialog open={!!deleting} onOpenChange={(o) => !o && setDeleting(null)}>
+        <DialogContent className="max-w-sm bg-white">
+          <DialogHeader>
+            <DialogTitle className="text-sm font-bold text-slate-900">Excluir produto</DialogTitle>
+            <DialogDescription className="text-xs text-slate-500">
+              "{deleting?.name}" será excluído. Produtos com histórico comercial são arquivados em
+              vez de excluídos.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setDeleting(null)}>
+              Cancelar
+            </Button>
+            <Button
+              size="sm"
+              onClick={handleDeleteSingle}
+              disabled={bulkBusy}
+              className="bg-red-600 hover:bg-red-700 text-white"
+            >
+              {bulkBusy ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : null}
+              Excluir
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
   )
 }
-
-export default MerchantDashboard
