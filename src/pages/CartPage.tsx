@@ -1,8 +1,8 @@
 import React from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { ShoppingBag, ArrowLeft, Trash2, Plus, Minus, Store, Bike, AlertCircle } from 'lucide-react'
-import { useCart } from '@/contexts/CartContext'
-import { getEffectivePrice, isPromoActive } from '@/lib/catalog'
+import { useCart, lineUnitPrice } from '@/contexts/CartContext'
+import { getPromoInfo, formatBRL } from '@/lib/catalog'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 
@@ -69,7 +69,7 @@ export const CartPage: React.FC = () => {
               <h3 className="font-bold text-sm text-slate-900">{cartStore.name}</h3>
             </div>
           </div>
-          <Link to={`/obidos/${cartStore.slug}`}>
+          <Link to={`/${cartStore.expand?.city_id?.slug || 'obidos'}/${cartStore.slug}`}>
             <Button variant="outline" size="sm" className="text-xs">
               Ver Catálogo
             </Button>
@@ -84,9 +84,12 @@ export const CartPage: React.FC = () => {
           </div>
 
           {items.map((item) => {
-            const price = getEffectivePrice(item.product)
+            const promoInfo = getPromoInfo(item.product)
+            const promoActive = promoInfo.hasPromo && !promoInfo.expired && !promoInfo.notStarted
+            const unitPrice = lineUnitPrice(item)
+            const basePrice = item.product.price
             return (
-              <div key={item.product.id} className="p-4 flex items-center justify-between gap-4">
+              <div key={item.lineId} className="p-4 flex items-center justify-between gap-4">
                 <div className="space-y-1">
                   <div className="flex items-center gap-2">
                     <h4 className="font-bold text-xs text-slate-900">{item.product.name}</h4>
@@ -99,22 +102,42 @@ export const CartPage: React.FC = () => {
                       </Badge>
                     )}
                   </div>
-                  <p className="text-[11px] text-slate-400">
-                    R$ {price.toFixed(2).replace('.', ',')} por {item.product.unit || 'un'}
-                  </p>
+                  {/* detalhes da linha: variação e complementos selecionados */}
+                  {item.selection?.variationName && (
+                    <p className="text-[11px] text-slate-500">{item.selection.variationName}</p>
+                  )}
+                  {(item.selection?.complementNames?.length ?? 0) > 0 && (
+                    <p className="text-[11px] text-slate-400">
+                      + {item.selection!.complementNames!.join(', ')}
+                    </p>
+                  )}
+                  {promoActive ? (
+                    <p className="text-[11px] text-slate-400">
+                      <span className="line-through">{formatBRL(basePrice)}</span>{' '}
+                      <span className="text-[#E63239] font-bold">{formatBRL(unitPrice)}</span> por{' '}
+                      {item.product.unit || 'un'}
+                      {promoInfo.discountPct > 0 && (
+                        <span className="ml-1 text-[#E63239]">-{promoInfo.discountPct}%</span>
+                      )}
+                    </p>
+                  ) : (
+                    <p className="text-[11px] text-slate-400">
+                      {formatBRL(unitPrice)} por {item.product.unit || 'un'}
+                    </p>
+                  )}
                 </div>
 
                 <div className="flex items-center gap-3">
                   <div className="flex items-center gap-1.5 bg-slate-100 rounded-lg p-1">
                     <button
-                      onClick={() => updateQuantity(item.product.id, item.quantity - 1)}
+                      onClick={() => updateQuantity(item.lineId, item.quantity - 1)}
                       className="w-6 h-6 rounded bg-white text-slate-700 flex items-center justify-center hover:bg-slate-200"
                     >
                       <Minus className="w-3 h-3" />
                     </button>
                     <span className="text-xs font-bold w-6 text-center">{item.quantity}</span>
                     <button
-                      onClick={() => updateQuantity(item.product.id, item.quantity + 1)}
+                      onClick={() => updateQuantity(item.lineId, item.quantity + 1)}
                       className="w-6 h-6 rounded bg-[#1754AE] text-white flex items-center justify-center hover:bg-[#12428C]"
                     >
                       <Plus className="w-3 h-3" />
@@ -122,7 +145,7 @@ export const CartPage: React.FC = () => {
                   </div>
 
                   <span className="font-bold text-xs text-slate-900 w-16 text-right">
-                    R$ {(price * item.quantity).toFixed(2).replace('.', ',')}
+                    {formatBRL(unitPrice * item.quantity)}
                   </span>
                 </div>
               </div>

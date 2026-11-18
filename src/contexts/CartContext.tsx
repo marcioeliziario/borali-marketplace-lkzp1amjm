@@ -1,18 +1,37 @@
 import React, { createContext, useContext, useState, useEffect } from 'react'
 import { Product, Store } from '@/types'
-import { getEffectivePrice } from '@/lib/catalog'
+import { getEffectivePrice, getProductVariations, getProductComplements } from '@/lib/catalog'
+import type { SelectedOptions } from '@/lib/publicCatalog'
+
+export interface CartItemSelection {
+  variationKey?: string | null
+  variationName?: string
+  variationUnitPrice?: number
+  complementOptions?: string[]
+  complementNames?: string[]
+  complementUnitExtra?: number
+}
 
 export interface CartItem {
+  /** id único da linha: product.id + variação + complementos */
+  lineId: string
   product: Product
   quantity: number
+  selection?: CartItemSelection
 }
 
 interface CartContextType {
   cartStore: Store | null
   items: CartItem[]
-  addItem: (product: Product, store: Store, quantity?: number) => void
-  removeItem: (productId: string) => void
-  updateQuantity: (productId: string, quantity: number) => void
+  addItem: (
+    product: Product,
+    store: Store,
+    quantity?: number,
+    selectedVariationKey?: string | null,
+    selectedComplementOptions?: Record<string, string[]>,
+  ) => void
+  removeItem: (lineId: string) => void
+  updateQuantity: (lineId: string, quantity: number) => void
   clearCart: () => void
   totalCount: number
   totalAmount: number
@@ -31,8 +50,17 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (saved) {
         const parsed = JSON.parse(saved)
         if (parsed?.store && Array.isArray(parsed?.items)) {
+          // Sanitiza itens de versões antigas (sem lineId/seleção)
+          const safe: CartItem[] = parsed.items
+            .filter((i: CartItem) => i?.product?.id)
+            .map((i: CartItem) => ({
+              lineId: i.lineId ?? i.product.id,
+              product: i.product,
+              quantity: Math.max(1, Number(i.quantity) || 1),
+              selection: i.selection,
+            }))
           setCartStore(parsed.store)
-          setItems(parsed.items)
+          setItems(safe)
         }
       }
     } catch (e) {
@@ -49,15 +77,21 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [cartStore, items])
 
-  const addItem = (product: Product, store: Store, quantity = 1) => {
+  const addItem = (
+    product: Product,
+    store: Store,
+    quantity = 1,
+    selectedVariationKey?: string | null,
+    selectedComplementOptions?: Record<string, string[]>,
+  ) => {
     // Regra: carrinho pertence a UM ÚNICO estabelecimento por pedido
     if (cartStore && cartStore.id !== store.id) {
       const confirmReplace = window.confirm(
         `Seu carrinho já contém itens de "${cartStore.name}". Deseja esvaziar o carrinho para adicionar produtos de "${store.name}"?`,
       )
       if (!confirmReplace) return
-      setItems([{ product, quantity }])
       setCartStore(store)
+      setItems(buildItems([{ product, quantity, selectedVariationKey, selectedComplementOptions }]))
       return
     }
 
@@ -66,19 +100,22 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     setItems((prev) => {
-      const existing = prev.find((i) => i.product.id === product.id)
-      if (existing) {
-        return prev.map((i) =>
-          i.product.id === product.id ? { ...i, quantity: i.quantity + quantity } : i,
-        )
-      }
-      return [...prev, { product, quantity }]
+      const pending: PendingAdd[] = [
+        ...prev.map((i) => ({
+          product: i.product,
+          quantity: i.quantity,
+          selectedVariationKey: i.selection?.variationKey ?? null,
+          selectedComplementOptions: complementSelectionMap(i.product, i.selection),
+        })),
+        { product, quantity, selectedVariationKey, selectedComplementOptions },
+      ]
+      return buildItems(pending)
     })
   }
 
-  const removeItem = (productId: string) => {
+  const removeItem = (lineId: string) => {
     setItems((prev) => {
-      const updated = prev.filter((i) => i.product.id !== productId)
+      const updated = prev.filter((i) => i.lineId !== lineId)
       if (updated.length === 0) {
         setCartStore(null)
       }
@@ -86,12 +123,12 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     })
   }
 
-  const updateQuantity = (productId: string, quantity: number) => {
+  const updateQuantity = (lineId: string, quantity: number) => {
     if (quantity <= 0) {
-      removeItem(productId)
+      removeItem(lineId)
       return
     }
-    setItems((prev) => prev.map((i) => (i.product.id === productId ? { ...i, quantity } : i)))
+    setItems((prev) => prev.map((i) => (i.lineId === lineId ? { ...i, quantity } : i)))
   }
 
   const clearCart = () => {
@@ -101,7 +138,7 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const totalCount = items.reduce((acc, i) => acc + i.quantity, 0)
   const totalAmount = items.reduce((acc, i) => {
-    return acc + getEffectivePrice(i.product) * i.quantity
+    return acc + lineUnitPrice(i) * i.quantity
   }, 0)
 
   return (
@@ -120,6 +157,102 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
       {children}
     </CartContext.Provider>
   )
+}
+
+/** Preço unitário REAL da linha (preço vigente + variação + complementos) */
+export function lineUnitPrice(item: CartItem): number {
+  const sel = item.selection
+  if (!sel) return getEffectivePrice(item.product)
+  return (
+    (sel.variationUnitPrice ?? getEffectivePrice(item.product)) + (sel.complementUnitExtra ?? 0)
+  )
+}
+
+interface PendingAdd {
+  product: Product
+  quantity: number
+  selectedVariationKey?: string | null
+  selectedComplementOptions?: Record<string, string[]>
+}
+
+/**
+ * Agrupa adições por (produto + variação + complementos) e calcula nomes/valores.
+ * Regra de preço: SEMPRE via util central (getEffectivePrice) — nunca duplicada aqui.
+ */
+/** Converte a seleção persistida de uma linha de volta para o mapa grupo→opções */
+function complementSelectionMap(
+  product: Product,
+  sel?: CartItemSelection,
+): Record<string, string[]> | undefined {
+  if (!sel?.complementOptions?.length) return undefined
+  const groups = getProductComplements(product)
+  const map: Record<string, string[]> = {}
+  for (const optionId of sel.complementOptions) {
+    const group = groups.find((g) => g.options.some((o) => o.id === optionId))
+    if (!group) continue
+    map[group.id] = [...(map[group.id] ?? []), optionId]
+  }
+  return map
+}
+
+function buildItems(pending: PendingAdd[]): CartItem[] {
+  const items: CartItem[] = []
+  for (const p of pending) {
+    const selection: CartItemSelection = {
+      variationKey: p.selectedVariationKey ?? null,
+      variationName: undefined,
+      variationUnitPrice: undefined,
+      complementOptions: [],
+      complementNames: [],
+      complementUnitExtra: 0,
+    }
+
+    const variations = getProductVariations(p.product)
+    if (p.selectedVariationKey) {
+      const variation = variations.find((v) => v.key === p.selectedVariationKey)
+      if (variation) {
+        selection.variationName = variation.name
+        selection.variationUnitPrice = variation.price > 0 ? variation.price : undefined
+      }
+    }
+
+    if (p.selectedComplementOptions) {
+      const names: string[] = []
+      let extra = 0
+      const groups = getProductComplements(p.product)
+      for (const groupId of Object.keys(p.selectedComplementOptions)) {
+        const group = groups.find((g) => g.id === groupId)
+        if (!group) continue
+        for (const optionId of p.selectedComplementOptions[groupId]) {
+          const option = group.options.find((o) => o.id === optionId)
+          if (!option) continue
+          names.push(option.name)
+          extra += option.price
+          selection.complementOptions?.push(optionId)
+        }
+      }
+      selection.complementNames = names
+      selection.complementUnitExtra = extra
+    }
+
+    const hasSelection = !!selection.variationKey || (selection.complementOptions?.length ?? 0) > 0
+    const lineId = hasSelection
+      ? `${p.product.id}::${selection.variationKey ?? '-'}::${(selection.complementOptions ?? []).join(',')}`
+      : p.product.id
+
+    const existing = items.find((i) => i.lineId === lineId)
+    if (existing) {
+      existing.quantity += p.quantity
+    } else {
+      items.push({
+        lineId,
+        product: p.product,
+        quantity: p.quantity,
+        selection: hasSelection ? selection : undefined,
+      })
+    }
+  }
+  return items
 }
 
 export const useCart = () => {
