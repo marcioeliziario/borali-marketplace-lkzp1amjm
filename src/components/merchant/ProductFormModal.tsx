@@ -698,6 +698,3 @@ export const ProductFormModal: React.FC<Props> = ({
     </Dialog>
   )
 }
-
-// re-export para uso externo (badge de preço vigente no painel)
-export { getEffectivePrice }

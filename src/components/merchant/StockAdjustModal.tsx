@@ -18,8 +18,8 @@ interface Props {
   open: boolean
   onOpenChange: (open: boolean) => void
   product: Product | null
-  storeId: string
-  onAdjusted: (updated: { id: string; name: string; stock: number; unit: string }) => void
+  storeId?: string
+  onAdjusted: (updated: Product) => void
 }
 
 const REASONS = ['Compra recebida', 'Correção de inventário', 'Avaria/loss', 'Vencimento', 'Outro']

@@ -65,7 +65,7 @@ import {
   Plus,
   Power,
   Search,
-  Store,
+  Store as StoreIcon,
   Trash2,
   TriangleAlert,
   Upload,
@@ -182,8 +182,8 @@ export const MerchantDashboard: React.FC = () => {
     toast({ title: isEdit ? 'Produto atualizado' : 'Produto cadastrado', description: saved.name })
   }
 
-  const handleStockAdjusted = (upd: { id: string; name: string; stock: number }) => {
-    setProducts((prev) => prev.map((p) => (p.id === upd.id ? { ...p, stock: upd.stock } : p)))
+  const handleStockAdjusted = (upd: Product) => {
+    setProducts((prev) => prev.map((p) => (p.id === upd.id ? { ...p, ...upd } : p)))
   }
 
   const askConfirm = (action: typeof confirmBulk) => {
@@ -316,7 +316,10 @@ export const MerchantDashboard: React.FC = () => {
   }
 
   const handleExportCSV = () => {
-    const csv = productsToCSV(products)
+    const csv = productsToCSV(products, (p) => {
+      const cat = categories.find((c) => c.id === p.store_category_id)
+      return cat?.name || ''
+    })
     const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
@@ -347,7 +350,7 @@ export const MerchantDashboard: React.FC = () => {
   if (!user?.store_id) {
     return (
       <div className="container mx-auto px-4 py-16 text-center">
-        <Store className="w-12 h-12 mx-auto text-slate-300 mb-4" />
+        <StoreIcon className="w-12 h-12 mx-auto text-slate-300 mb-4" />
         <h1 className="text-xl font-bold text-slate-900 mb-2">Nenhuma loja vinculada</h1>
         <p className="text-sm text-slate-500 mb-6">
           Sua conta ainda não está vinculada a um estabelecimento.
@@ -379,7 +382,7 @@ export const MerchantDashboard: React.FC = () => {
         </Badge>
       )
     const promo = getPromoInfo(p)
-    if (promo?.active)
+    if (isPromoActive(p))
       return (
         <Badge variant="outline" className="text-[10px] bg-emerald-50 text-emerald-700">
           Em promoção ({promo.discountPct}%)
@@ -398,7 +401,7 @@ export const MerchantDashboard: React.FC = () => {
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-6">
         <div>
           <h1 className="text-xl font-bold text-slate-900 flex items-center gap-2">
-            <Store className="w-5 h-5 text-[#1754AE]" /> Painel do Comerciante
+            <StoreIcon className="w-5 h-5 text-[#1754AE]" /> Painel do Comerciante
           </h1>
           <p className="text-xs text-slate-500">
             {store?.name} — gestão de catálogo, promoções e estoque
@@ -836,6 +839,7 @@ export const MerchantDashboard: React.FC = () => {
         open={stockOpen}
         onOpenChange={setStockOpen}
         product={stockProduct}
+        storeId={store!.id}
         onAdjusted={handleStockAdjusted}
       />
       <CSVImportModal
@@ -893,27 +897,39 @@ export const MerchantDashboard: React.FC = () => {
                 onUpload={async () => {}}
               />
             )}
-            {(quickEdit.section === 'variations' || quickEdit.section === 'complements') && (
-              <div className="space-y-3">
-                {(quickEdit.section === 'variations' ? VariationsEditor : ComplementsEditor) &&
-                  null}
-                <VariationsEditor
-                  variations={
-                    typeof quickEdit.product.variations === 'string'
-                      ? JSON.parse(quickEdit.product.variations || '[]')
-                      : quickEdit.product.variations || []
-                  }
-                  onChange={(arr) => {
-                    setProducts((prev) =>
-                      prev.map((p) =>
-                        p.id === quickEdit.product.id
-                          ? { ...p, variations: JSON.stringify(arr) }
-                          : p,
-                      ),
-                    )
-                  }}
-                />
-              </div>
+            {quickEdit.section === 'variations' && (
+              <VariationsEditor
+                variations={
+                  typeof quickEdit.product.variations === 'string'
+                    ? JSON.parse(quickEdit.product.variations || '[]')
+                    : quickEdit.product.variations || []
+                }
+                onChange={(arr) => {
+                  setProducts((prev) =>
+                    prev.map((p) =>
+                      p.id === quickEdit.product.id ? { ...p, variations: JSON.stringify(arr) } : p,
+                    ),
+                  )
+                }}
+              />
+            )}
+            {quickEdit.section === 'complements' && (
+              <ComplementsEditor
+                complements={
+                  typeof quickEdit.product.complements === 'string'
+                    ? JSON.parse(quickEdit.product.complements || '[]')
+                    : quickEdit.product.complements || []
+                }
+                onChange={(arr) => {
+                  setProducts((prev) =>
+                    prev.map((p) =>
+                      p.id === quickEdit.product.id
+                        ? { ...p, complements: JSON.stringify(arr) }
+                        : p,
+                    ),
+                  )
+                }}
+              />
             )}
           </DialogContent>
         </Dialog>

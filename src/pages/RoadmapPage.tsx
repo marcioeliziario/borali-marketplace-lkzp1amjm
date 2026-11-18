@@ -59,6 +59,8 @@ export const RoadmapPage: React.FC = () => {
         'Loja virtual com busca, filtros (categoria, preço, disponibilidade, só promoções) e ordenação',
         'Detalhe do produto com variações e complementos antes de adicionar ao carrinho',
         'Regulamentação legal ativa para produtos com restrição de idade',
+        'Usuário de teste do Mercadinho + teste de isolamento entre estabelecimentos (scripts/test-isolamento.ts)',
+        'Auditoria server-side (audit_log) em criação, atualização, exclusão e movimentação de estoque',
       ],
     },
     {

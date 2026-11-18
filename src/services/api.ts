@@ -139,6 +139,11 @@ export async function createStoreCategory(data: Partial<StoreCategory>): Promise
   return await pb.collection('store_categories').create<StoreCategory>(data)
 }
 
+/** Aliases usados pelo CategoryManagerModal (mesma coleção store_categories). */
+export const createProductCategory = createStoreCategory
+export const updateProductCategory = updateStoreCategory
+export const deleteProductCategory = deleteStoreCategory
+
 export async function updateStoreCategory(
   id: string,
   data: Partial<StoreCategory>,
