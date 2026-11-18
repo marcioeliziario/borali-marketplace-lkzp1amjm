@@ -43,42 +43,60 @@ export interface ProductPromoInfo {
  * Calcula o estado da promoção de um produto.
  * Promoção só é válida se promo_price > 0 e (opcionalmente) dentro do período.
  */
-export function getPromoInfo(
-  product: {
-    price?: number
-    promo_price?: number | null
-    promo_starts_at?: string | null
-    promo_ends_at?: string | null
-  },
-  now: Date = new Date(),
-): ProductPromoInfo {
+export type PromoProductRef = {
+  price?: number
+  promo_price?: number | null
+  promo_starts_at?: string | number | null
+  promo_ends_at?: string | number | null
+}
+
+/**
+ * Estado da promoção de um produto — ÚNICA fonte de verdade para exibir preço.
+ * Uma promoção só é considerada vigente quando:
+ * - promo_price existe e é MENOR que o preço normal;
+ * - a data atual está dentro do período (promo_starts_at / promo_ends_at, se informados).
+ * Os campos de período aceitam timestamp unix (segundos, como gravado pela migração 0005),
+ * data ISO ou "yyyy-mm-dd".
+ */
+export function getPromoInfo(product: PromoProductRef, now: Date = new Date()): ProductPromoInfo {
   const price = Number(product.price) || 0
   const promo = Number(product.promo_price) || 0
   if (promo <= 0 || promo >= price) {
     return { hasPromo: false, expired: false, notStarted: false, discountPct: 0 }
   }
-  const start = product.promo_starts_at ? new Date(product.promo_starts_at) : null
-  const end = product.promo_ends_at ? new Date(product.promo_ends_at) : null
+  const toDate = (v?: string | number | null): Date | null => {
+    if (v === null || v === undefined || v === '') return null
+    if (typeof v === 'number') return new Date(v < 1e12 ? v * 1000 : v)
+    const asNum = Number(v)
+    if (!Number.isNaN(asNum) && v !== '' && /^-?\d+(\.\d+)?$/.test(String(v).trim())) {
+      return new Date(asNum < 1e12 ? asNum * 1000 : asNum)
+    }
+    const parsed = new Date(v)
+    return Number.isNaN(parsed.getTime()) ? null : parsed
+  }
+  const start = toDate(product.promo_starts_at)
+  const end = toDate(product.promo_ends_at)
   const notStarted = !!start && start.getTime() > now.getTime()
-  const expired = !!end && end.getTime() < now.getTime()
+  // fim vigora durante todo o último dia: comparar com o fim do dia quando só data
+  const endTime = end
+    ? end.getHours() === 0 && end.getMinutes() === 0
+      ? end.getTime() + 86399999
+      : end.getTime()
+    : 0
+  const expired = !!end && endTime < now.getTime()
   const discountPct = Math.round(((price - promo) / price) * 100)
   return { hasPromo: true, expired, notStarted, discountPct }
 }
 
+/** Promoção vigente agora (dentro do período e preço promocional menor) */
+export function isPromoActive(product: PromoProductRef, now: Date = new Date()): boolean {
+  const info = getPromoInfo(product, now)
+  return info.hasPromo && !info.expired && !info.notStarted
+}
+
 /** Preço efetivamente vigente (promocional se promoção ativa) */
-export function getEffectivePrice(
-  product: {
-    price?: number
-    promo_price?: number | null
-    promo_starts_at?: string | null
-    promo_ends_at?: string | null
-  },
-  now: Date = new Date(),
-): number {
-  const promo = getPromoInfo(product, now)
-  return promo.hasPromo && !promo.expired && !promo.notStarted
-    ? Number(product.promo_price)
-    : Number(product.price) || 0
+export function getEffectivePrice(product: PromoProductRef, now: Date = new Date()): number {
+  return isPromoActive(product, now) ? Number(product.promo_price) : Number(product.price) || 0
 }
 
 export function formatBRL(value: number): string {
