@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react'
 import { Product, Store } from '@/types'
+import { getEffectivePrice } from '@/lib/catalog'
 
 export interface CartItem {
   product: Product
@@ -100,8 +101,7 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const totalCount = items.reduce((acc, i) => acc + i.quantity, 0)
   const totalAmount = items.reduce((acc, i) => {
-    const price = i.product.promo_price ? i.product.promo_price : i.product.price
-    return acc + price * i.quantity
+    return acc + getEffectivePrice(i.product) * i.quantity
   }, 0)
 
   return (

@@ -2,6 +2,7 @@ import React from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { ShoppingBag, ArrowLeft, Trash2, Plus, Minus, Store, Bike, AlertCircle } from 'lucide-react'
 import { useCart } from '@/contexts/CartContext'
+import { getEffectivePrice, isPromoActive } from '@/lib/catalog'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 
@@ -83,7 +84,7 @@ export const CartPage: React.FC = () => {
           </div>
 
           {items.map((item) => {
-            const price = item.product.promo_price || item.product.price
+            const price = getEffectivePrice(item.product)
             return (
               <div key={item.product.id} className="p-4 flex items-center justify-between gap-4">
                 <div className="space-y-1">
@@ -147,7 +148,7 @@ export const CartPage: React.FC = () => {
           <div className="pt-3 p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-900 flex items-start gap-2 text-[11px]">
             <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
             <span>
-              <strong>Fase Atual (v0.1):</strong> A estrutura de pedidos e carrinho por loja está
+              <strong>Fase Atual (v0.2):</strong> A estrutura de pedidos e carrinho por loja está
               implementada. Conforme o roadmap, a finalização completa de pedidos e pagamentos
               entrará nas versões <strong>v0.3 e v0.4</strong>.
             </span>

@@ -16,6 +16,7 @@ import {
 import { useCity } from '@/contexts/CityContext'
 import { Category, Store, Product } from '@/types'
 import { getCategories, getStoresByCity, getProductsByStore } from '@/services/api'
+import { isPromoActive, getPromoInfo } from '@/lib/catalog'
 import CategoryIcon from '@/components/common/CategoryIcon'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -86,8 +87,8 @@ export const MarketplaceHome: React.FC = () => {
     return matchesSearch && matchesCategory
   })
 
-  // Ofertas (produtos com preço promocional)
-  const promoProducts = popularProducts.filter((p) => p.promo_price && p.promo_price < p.price)
+  // Ofertas: SOMENTE promoções vigentes (período + preço) via util central
+  const promoProducts = popularProducts.filter((p) => isPromoActive(p))
 
   return (
     <div className="min-h-screen bg-[#F5F7FA]">
@@ -97,7 +98,7 @@ export const MarketplaceHome: React.FC = () => {
           <div className="flex items-center gap-2">
             <Info className="w-4 h-4 text-amber-600 flex-shrink-0" />
             <span>
-              <strong>BORALI v0.1 (Piloto Óbidos/PA):</strong> Os estabelecimentos e produtos
+              <strong>BORALI v0.2 (Piloto Óbidos/PA):</strong> Os estabelecimentos e produtos
               exibidos possuem marcação{' '}
               <Badge
                 variant="outline"
@@ -386,40 +387,48 @@ export const MarketplaceHome: React.FC = () => {
             </div>
 
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 sm:gap-4">
-              {promoProducts.map((prod) => (
-                <div
-                  key={prod.id}
-                  className="bg-white rounded-xl border border-slate-200 p-3 flex flex-col justify-between hover:shadow-sm transition"
-                >
-                  <div className="space-y-1.5">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[9px] bg-red-100 text-[#E63239] font-bold px-1.5 py-0.5 rounded">
-                        DEMO
-                      </span>
-                      <span className="text-[10px] text-slate-400">
-                        {prod.unit ? `por ${prod.unit}` : ''}
-                      </span>
+              {promoProducts.map((prod) => {
+                const promoInfo = getPromoInfo(prod)
+                return (
+                  <div
+                    key={prod.id}
+                    className="bg-white rounded-xl border border-slate-200 p-3 flex flex-col justify-between hover:shadow-sm transition"
+                  >
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[9px] bg-red-100 text-[#E63239] font-bold px-1.5 py-0.5 rounded">
+                          DEMO
+                        </span>
+                        <span className="text-[10px] text-slate-400">
+                          {prod.unit ? `por ${prod.unit}` : ''}
+                        </span>
+                      </div>
+
+                      <h4 className="font-semibold text-xs text-slate-800 line-clamp-2 pt-1">
+                        {prod.name}
+                      </h4>
+
+                      <p className="text-[11px] text-slate-400 line-clamp-1">{prod.description}</p>
                     </div>
 
-                    <h4 className="font-semibold text-xs text-slate-800 line-clamp-2 pt-1">
-                      {prod.name}
-                    </h4>
-
-                    <p className="text-[11px] text-slate-400 line-clamp-1">{prod.description}</p>
-                  </div>
-
-                  <div className="pt-3 mt-2 border-t border-slate-100 flex items-baseline justify-between">
-                    <div>
-                      <p className="text-xs text-slate-400 line-through">
-                        R$ {Number(prod.price).toFixed(2).replace('.', ',')}
-                      </p>
-                      <p className="text-sm font-bold text-[#E63239]">
-                        R$ {Number(prod.promo_price).toFixed(2).replace('.', ',')}
-                      </p>
+                    <div className="pt-3 mt-2 border-t border-slate-100 flex items-baseline justify-between">
+                      <div>
+                        <p className="text-xs text-slate-400 line-through">
+                          R$ {Number(prod.price).toFixed(2).replace('.', ',')}
+                        </p>
+                        <p className="text-sm font-bold text-[#E63239]">
+                          R$ {Number(prod.promo_price).toFixed(2).replace('.', ',')}
+                          {promoInfo.discountPct > 0 && (
+                            <span className="ml-1.5 text-[10px] font-bold bg-red-100 rounded px-1 py-0.5">
+                              -{promoInfo.discountPct}%
+                            </span>
+                          )}
+                        </p>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           </div>
         )}

@@ -495,7 +495,7 @@ export const StoreFront: React.FC = () => {
 
                   {/* Aviso v0.1: Estrutura sem checkout ainda */}
                   <div className="p-2.5 bg-blue-50 border border-blue-100 rounded-xl text-[11px] text-blue-900 leading-snug">
-                    <strong className="block mb-0.5">Versão 0.1 do Borali:</strong>
+                    <strong className="block mb-0.5">Versão 0.2 do Borali:</strong>
                     A estrutura de carrinho e produtos está funcional. O fluxo completo de checkout
                     e pagamentos entrará na <strong>v0.3 e v0.4</strong> conforme o roadmap.
                   </div>

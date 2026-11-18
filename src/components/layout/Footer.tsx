@@ -44,7 +44,7 @@ export const Footer: React.FC = () => {
             <li>
               <Link to="/roadmap" className="hover:text-white transition flex items-center gap-1">
                 <span>Roadmap do Projeto</span>
-                <span className="text-[9px] bg-red-600 text-white px-1 rounded">v0.1</span>
+                <span className="text-[9px] bg-red-600 text-white px-1 rounded">v0.2</span>
               </Link>
             </li>
           </ul>
@@ -88,8 +88,8 @@ export const Footer: React.FC = () => {
             estabelecimentos.
           </p>
           <div className="p-2.5 bg-slate-800/80 rounded-md border border-slate-700 text-[11px] text-slate-300">
-            <strong className="text-white block mb-0.5">Versão Atual: v0.1</strong>
-            Fundação, identidade visual e arquitetura multicidade com dados piloto demonstrativos.
+            <strong className="text-white block mb-0.5">Versão Atual: v0.2</strong>
+            Catálogo completo, painel do lojista em seções, promoções com período e ações em lote.
           </div>
         </div>
       </div>
