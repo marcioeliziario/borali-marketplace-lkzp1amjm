@@ -101,8 +101,10 @@ cronAdd('borali-homolog-temp', '* * * * *', (c) => {
       identity: email,
       password: password,
     })
-    if (r.status !== 200) {
-      throw new Error('login falhou ' + email + ': HTTP ' + r.status)
+    if (r.status !== 200 || !r.data || !r.data.token) {
+      throw new Error(
+        'login falhou ' + email + ': HTTP ' + r.status + (r.data ? ' (sem token na resposta)' : ''),
+      )
     }
     return r.data.token
   }
