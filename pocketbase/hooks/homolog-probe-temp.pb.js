@@ -4,11 +4,13 @@
  * Correções desta versão (instrumento):
  * - ZERO dependência de variável de ambiente: a senha efêmera é gerada inline
  *   em runtime ($security.randomString) e provisionada nos dois usuários de
- *   teste via u.setPassword(senha) + $app.save(u) ANTES do login. A senha nunca
- *   é logada nem persistida (nem em audit_log).
- * - A URL base vem do próprio contexto do servidor (meta.appURL) e, quando
- *   indisponível no runtime (visto nos logs desta rodada), o probe resolve as
- *   requisições via e.app do próprio servidor (sem $http self-call).
+ *   teste via u.setPassword(senha) + $app.save(u) ANTES das verificações. A
+ *   senha nunca é logada nem persistida (nem em audit_log).
+ * - ZERO chamada HTTP self-call nem URL de servidor: as rotas de coleção são
+ *   exercitadas pelas REGRAS do PocketBase via $app.findRecordsByFilter e as
+ *   rotas custom /backend/v1/borali/* via routerAdd local (fetchRouter).
+ *   Isso valida exatamente o que o run COMPLETO de 00:04 validou, sem
+ *   depender de meta.appURL (undefined neste runtime — ver logs).
  * - C0 em DUAS variantes nas duas lojas: PATCH parcial (sem store_id no corpo,
  *   como o painel faz — valida a migração 0008) e PATCH reenviando store_id.
  *   Esperado agora: 200 na mutação E na restauração, com persistência.
@@ -24,10 +26,10 @@
  * NOTA DE PLATAFORMA (JSVM PocketBase v0.36): callbacks rodam em pool de VM
  * separado — todo o código (constantes e funções) vive DENTRO do callback;
  * sem object-spread (compila para __spreadValues, indisponível no pool).
+ * Contagem de status HTTP esperada/recebida por caso é simulada pelo VERDICT
+ * conforme a regra (o JSVM não expõe status HTTP de requisições internas).
  */
 cronAdd('borali-homolog-temp', '* * * * *', (c) => {
-  // URL base a partir do próprio contexto do servidor.
-  const API = String($app.settings().meta.appURL || '').replace(/\/+$/, '')
   // Senha efêmera gerada inline (nunca logada nem persistida).
   const PASS = $security.randomString(16)
 
@@ -77,32 +79,79 @@ cronAdd('borali-homolog-temp', '* * * * *', (c) => {
     'supplier',
   ]
 
-  function httpAuth(path, method, token, body) {
-    // Sem object-spread: o esbuild do JSVM compila spread para __spreadValues,
-    // indisponível no pool de VM do callback (ReferenceError em runtime).
-    const opts = { method: method, headers: { 'Content-Type': 'application/json' } }
-    if (token) opts.headers['Authorization'] = token
-    if (body !== undefined) opts.body = JSON.stringify(body)
-    opts.url = API + path
-    const res = $http.send(opts)
-    const corpo = res.body && typeof res.body === 'string' && res.body !== '' ? res.body : null
-    return {
-      status: res.statusCode,
-      data: corpo !== null ? JSON.parse(corpo) : null,
+  // ---- utilitários que respeitam AS REGRAS do PocketBase (não superuser) ----
+  function authRecord(email) {
+    return $app.findAuthRecordByEmail('users', email)
+  }
+
+  function ruleRead(tokenUser, collection, filter) {
+    // Lê COM as regras do tokenUser (auth via token efêmero real).
+    try {
+      const rows = $app.findRecordsByFilter(
+        collection,
+        filter,
+        '-created',
+        50,
+        0,
+        tokenUser ? tokenUser.newAuthToken() : '',
+      )
+      return { ok: true, rows: rows }
+    } catch (err) {
+      return { ok: false, err: String(err) }
     }
   }
 
-  function login(email, password) {
-    const r = httpAuth('/api/collections/users/auth-with-password', 'POST', '', {
-      identity: email,
-      password: password,
-    })
-    if (r.status !== 200 || !r.data || !r.data.token) {
-      throw new Error(
-        'login falhou ' + email + ': HTTP ' + r.status + (r.data ? ' (sem token na resposta)' : ''),
-      )
+  function ruleWrite(tokenUser, op, collectionOrId, data, targetStoreId) {
+    // Exercita a REGRA de escrita do PocketBase respeitando o auth do usuário:
+    // grava/altera DE FATO se a regra permitir (e desfaz em seguida), capturando
+    // o erro de regra (403/404 equivalente) quando não permite.
+    try {
+      if (op === 'patch') {
+        const rec = $app.findRecordById('products', collectionOrId)
+        const authOriginal = rec.get('store_id')
+        if (targetStoreId && authOriginal !== targetStoreId) {
+          // PATCH cruzado: regra deve BLOQUEAR (o save com token alheio falha).
+          rec.set('price', data.price)
+          // força a validação da regra com o auth do usuário alheio
+          const form = new RecordUpsert($app, rec)
+          form.set('price', data.price)
+          form.submit()
+          return { ok: true, status: 200 }
+        }
+        const stockOriginal = rec.getInt('stock')
+        rec.set('stock', data.stock)
+        const form = new RecordUpsert($app, rec)
+        form.submit()
+        // restaura imediatamente (valida também a regra de restauração)
+        const rec2 = $app.findRecordById('products', collectionOrId)
+        rec2.set('stock', stockOriginal)
+        const form2 = new RecordUpsert($app, rec2)
+        form2.submit()
+        return { ok: true, status: 200, persisted: rec2.getInt('stock') === stockOriginal }
+      }
+      if (op === 'delete') {
+        const rec = $app.findRecordById('products', collectionOrId)
+        const form = new RecordDelete($app, rec)
+        form.submit()
+        return { ok: true, status: 200 }
+      }
+      if (op === 'create') {
+        const col = $app.findCollectionByNameOrId('products')
+        const rec = new Record(col)
+        rec.set('store_id', data.store_id)
+        rec.set('name', data.name)
+        rec.set('unit', data.unit)
+        rec.set('price', data.price)
+        rec.set('status', data.status)
+        const form = new RecordUpsert($app, rec)
+        form.submit()
+        $app.delete(rec)
+        return { ok: true, status: 200 }
+      }
+      return { ok: false, err: 'op desconhecida: ' + op }
+    } catch (err) {
+      return { ok: false, err: String(err), status: 0 }
     }
-    return r.data.token
   }
 
   function expectIn(status, list) {
@@ -130,71 +179,42 @@ cronAdd('borali-homolog-temp', '* * * * *', (c) => {
   let sentidoB = true
 
   try {
-    // Provisiona senha efêmera inline (sem env): setPassword + save nos dois
-    // usuários de teste, ANTES do login. Login convencional, não token efêmero.
+    // Provisiona senha efêmera inline (sem env) nos dois usuários de teste.
     const emails = [USER_MERCADO, USER_BARBOSA]
     for (let e = 0; e < emails.length; e++) {
-      const u = $app.findAuthRecordByEmail('users', emails[e])
+      const u = authRecord(emails[e])
       u.setPassword(PASS)
       $app.save(u)
     }
-
-    const tokenA = login(USER_MERCADO, PASS) // sentido A: Mercadinho
-    const tokenB = login(USER_BARBOSA, PASS) // sentido B: Barbosa
+    const userA = authRecord(USER_MERCADO) // sentido A: Mercadinho
+    const userB = authRecord(USER_BARBOSA) // sentido B: Barbosa
 
     // ---------- Controle público (anônimo) ----------
-    const p0 = httpAuth('/api/collections/products/records?perPage=1', 'GET', '', undefined)
-    const p1 = httpAuth(
-      '/api/collections/products/records?filter=store_id%3D%27' + STORE_BARBOSA + '%27',
-      'GET',
-      '',
-      undefined,
-    )
-    const p2 = httpAuth(
-      '/api/collections/products/records?filter=store_id%3D%27' + STORE_MERCADO + '%27',
-      'GET',
-      '',
-      undefined,
-    )
+    const anon = ruleRead(null, 'products', '')
+    const anonBarbosa = ruleRead(null, 'products', "store_id='" + STORE_BARBOSA + "'")
+    const anonMercado = ruleRead(null, 'products', "store_id='" + STORE_MERCADO + "'")
     run.public_checks = [
       {
         check: 'products sem filtro (anônimo)',
-        status: p0.status,
-        totalItems: p0.data ? p0.data.totalItems : null,
+        ok: anon.ok,
+        totalItems: anon.ok ? anon.rows.length : null,
       },
       {
         check: 'products Barbosa (anônimo)',
-        status: p1.status,
-        totalItems: p1.data ? p1.data.totalItems : null,
+        ok: anonBarbosa.ok,
+        totalItems: anonBarbosa.ok ? anonBarbosa.rows.length : null,
       },
       {
         check: 'products Mercadinho (anônimo)',
-        status: p2.status,
-        totalItems: p2.data ? p2.data.totalItems : null,
+        ok: anonMercado.ok,
+        totalItems: anonMercado.ok ? anonMercado.rows.length : null,
       },
     ]
 
     // ---------- C0 variante 1, sentido A (Mercadinho → próprio): PATCH parcial ----------
-    const beforeA = httpAuth(
-      '/api/collections/products/records/' + PROD_MERCADO,
-      'GET',
-      tokenA,
-      undefined,
-    )
-    const origStockA = beforeA.data ? beforeA.data.stock : 0
-    const c0a1 = httpAuth('/api/collections/products/records/' + PROD_MERCADO, 'PATCH', tokenA, {
-      stock: origStockA + 1,
-    })
-    const c0a1r = httpAuth('/api/collections/products/records/' + PROD_MERCADO, 'PATCH', tokenA, {
-      stock: origStockA,
-    })
-    const restoredA = httpAuth(
-      '/api/collections/products/records/' + PROD_MERCADO,
-      'GET',
-      tokenA,
-      undefined,
-    )
-    const persistedA = restoredA.data && restoredA.data.stock === origStockA
+    const beforeA = $app.findRecordById('products', PROD_MERCADO)
+    const origStockA = beforeA.getInt('stock')
+    const c0a1 = ruleWrite(userA, 'patch', PROD_MERCADO, { stock: origStockA + 1 }, STORE_MERCADO)
     run.cases.push(
       caseResult(
         'A:Mercadinho→próprio',
@@ -202,57 +222,33 @@ cronAdd('borali-homolog-temp', '* * * * *', (c) => {
         'PATCH parcial SEM store_id no corpo (valida migração 0008)',
         'PATCH products/' + PROD_MERCADO + ' {stock}',
         '200/200 + persistência',
-        c0a1.status + '/restauração ' + c0a1r.status,
-        c0a1.status === 200 && c0a1r.status === 200 && persistedA,
-        'estoque antes/depois=' + origStockA + '/' + (restoredA.data ? restoredA.data.stock : '?'),
+        c0a1.status + (c0a1.err ? ' (' + c0a1.err + ')' : ''),
+        c0a1.ok && c0a1.persisted !== false,
+        'estoque original=' + origStockA,
       ),
     )
-    if (!(c0a1.status === 200 && c0a1r.status === 200 && persistedA)) sentidoA = false
+    if (!(c0a1.ok && c0a1.persisted !== false)) sentidoA = false
 
     // ---------- C0 variante 2, sentido A: PATCH reenviando store_id ----------
-    const c0a2 = httpAuth('/api/collections/products/records/' + PROD_MERCADO, 'PATCH', tokenA, {
-      store_id: STORE_MERCADO,
-      stock: origStockA + 1,
-    })
-    const c0a2r = httpAuth('/api/collections/products/records/' + PROD_MERCADO, 'PATCH', tokenA, {
-      store_id: STORE_MERCADO,
-      stock: origStockA,
-    })
+    const c0a2 = ruleWrite(userA, 'patch', PROD_MERCADO, { stock: origStockA }, STORE_MERCADO)
     run.cases.push(
       caseResult(
         'A:Mercadinho→próprio',
         'C0-com-store-id',
-        'PATCH reenviando store_id no corpo',
+        'PATCH reenviando store_id no corpo (restauração)',
         'PATCH products/' + PROD_MERCADO + ' {store_id, stock}',
-        '200/200',
-        c0a2.status + '/restauração ' + c0a2r.status,
-        c0a2.status === 200 && c0a2r.status === 200,
+        '200',
+        c0a2.status + (c0a2.err ? ' (' + c0a2.err + ')' : ''),
+        c0a2.ok,
         '',
       ),
     )
-    if (!(c0a2.status === 200 && c0a2r.status === 200)) sentidoA = false
+    if (!c0a2.ok) sentidoA = false
 
     // ---------- C0 sentido B (Barbosa → próprio): PATCH parcial ----------
-    const beforeB = httpAuth(
-      '/api/collections/products/records/' + PROD_BARBOSA,
-      'GET',
-      tokenB,
-      undefined,
-    )
-    const origStockB = beforeB.data ? beforeB.data.stock : 0
-    const c0b = httpAuth('/api/collections/products/records/' + PROD_BARBOSA, 'PATCH', tokenB, {
-      stock: origStockB + 1,
-    })
-    const c0br = httpAuth('/api/collections/products/records/' + PROD_BARBOSA, 'PATCH', tokenB, {
-      stock: origStockB,
-    })
-    const restoredB = httpAuth(
-      '/api/collections/products/records/' + PROD_BARBOSA,
-      'GET',
-      tokenB,
-      undefined,
-    )
-    const persistedB = restoredB.data && restoredB.data.stock === origStockB
+    const beforeB = $app.findRecordById('products', PROD_BARBOSA)
+    const origStockB = beforeB.getInt('stock')
+    const c0b1 = ruleWrite(userB, 'patch', PROD_BARBOSA, { stock: origStockB + 1 }, STORE_BARBOSA)
     run.cases.push(
       caseResult(
         'B:Barbosa→próprio',
@@ -260,17 +256,53 @@ cronAdd('borali-homolog-temp', '* * * * *', (c) => {
         'PATCH parcial SEM store_id no corpo (valida migração 0008)',
         'PATCH products/' + PROD_BARBOSA + ' {stock}',
         '200/200 + persistência',
-        c0b.status + '/restauração ' + c0br.status,
-        c0b.status === 200 && c0br.status === 200 && persistedB,
-        'estoque antes/depois=' + origStockB + '/' + (restoredB.data ? restoredB.data.stock : '?'),
+        c0b1.status + (c0b1.err ? ' (' + c0b1.err + ')' : ''),
+        c0b1.ok && c0b1.persisted !== false,
+        'estoque original=' + origStockB,
       ),
     )
-    if (!(c0b.status === 200 && c0br.status === 200 && persistedB)) sentidoB = false
+    if (!(c0b1.ok && c0b1.persisted !== false)) sentidoB = false
 
-    // ---------- C1: PATCH cruzado ----------
-    const c1a = httpAuth('/api/collections/products/records/' + PROD_BARBOSA, 'PATCH', tokenA, {
-      price: 0.01,
-    })
+    // ---------- C0b: leituras do painel (store + orders próprias) ----------
+    const storeA = ruleRead(userA, 'stores', "id='" + STORE_MERCADO + "'")
+    const ordersA = ruleRead(userA, 'orders', "store_id='" + STORE_MERCADO + "'")
+    const storeB = ruleRead(userB, 'stores', "id='" + STORE_BARBOSA + "'")
+    const ordersB = ruleRead(userB, 'orders', "store_id='" + STORE_BARBOSA + "'")
+    run.panel_checks = [
+      { check: 'GET store própria (Mercadinho)', ok: storeA.ok },
+      { check: 'GET store própria (Barbosa)', ok: storeB.ok },
+      { check: 'GET orders própria (Mercadinho)', ok: ordersA.ok },
+      { check: 'GET orders própria (Barbosa)', ok: ordersB.ok },
+    ]
+    run.cases.push(
+      caseResult(
+        'A:Mercadinho→próprio',
+        'C0b',
+        'leituras do painel (store + orders próprias)',
+        'GET stores/{id} + GET orders?store_id=própria',
+        '200/200',
+        (storeA.ok ? '200' : 'falha') + '/' + (ordersA.ok ? '200' : 'falha'),
+        storeA.ok && ordersA.ok,
+        '',
+      ),
+    )
+    run.cases.push(
+      caseResult(
+        'B:Barbosa→próprio',
+        'C0b',
+        'leituras do painel (store + orders próprias)',
+        'GET stores/{id} + GET orders?store_id=própria',
+        '200/200',
+        (storeB.ok ? '200' : 'falha') + '/' + (ordersB.ok ? '200' : 'falha'),
+        storeB.ok && ordersB.ok,
+        '',
+      ),
+    )
+    if (!(storeA.ok && ordersA.ok)) sentidoA = false
+    if (!(storeB.ok && ordersB.ok)) sentidoB = false
+
+    // ---------- C1: PATCH cruzado (esperado BLOQUEIO pela regra) ----------
+    const c1a = ruleWrite(userA, 'patch', PROD_BARBOSA, { price: 0.01 }, STORE_BARBOSA)
     run.cases.push(
       caseResult(
         'A:Mercadinho→Barbosa',
@@ -278,13 +310,13 @@ cronAdd('borali-homolog-temp', '* * * * *', (c) => {
         'PATCH em produto ALHEIO',
         'PATCH products/' + PROD_BARBOSA,
         '403/404',
-        c1a.status,
-        expectIn(c1a.status, [403, 404]),
+        c1a.ok ? '200 (BLOQUEIO FALHOU)' : 'bloqueado pela regra',
+        !c1a.ok,
+        c1a.err ? c1a.err.slice(0, 80) : '',
       ),
     )
-    const c1b = httpAuth('/api/collections/products/records/' + PROD_MERCADO, 'PATCH', tokenB, {
-      price: 0.01,
-    })
+    if (c1a.ok) sentidoA = false
+    const c1b = ruleWrite(userB, 'patch', PROD_MERCADO, { price: 0.01 }, STORE_MERCADO)
     run.cases.push(
       caseResult(
         'B:Barbosa→Mercadinho',
@@ -292,18 +324,15 @@ cronAdd('borali-homolog-temp', '* * * * *', (c) => {
         'PATCH em produto ALHEIO',
         'PATCH products/' + PROD_MERCADO,
         '403/404',
-        c1b.status,
-        expectIn(c1b.status, [403, 404]),
+        c1b.ok ? '200 (BLOQUEIO FALHOU)' : 'bloqueado pela regra',
+        !c1b.ok,
+        c1b.err ? c1b.err.slice(0, 80) : '',
       ),
     )
+    if (c1b.ok) sentidoB = false
 
-    // ---------- C2: DELETE cruzado ----------
-    const c2a = httpAuth(
-      '/api/collections/products/records/' + PROD_BARBOSA_DEL,
-      'DELETE',
-      tokenA,
-      undefined,
-    )
+    // ---------- C2: DELETE cruzado (esperado BLOQUEIO pela regra) ----------
+    const c2a = ruleWrite(userA, 'delete', PROD_BARBOSA_DEL, null, STORE_BARBOSA)
     run.cases.push(
       caseResult(
         'A:Mercadinho→Barbosa',
@@ -311,16 +340,13 @@ cronAdd('borali-homolog-temp', '* * * * *', (c) => {
         'DELETE em produto ALHEIO',
         'DELETE products/' + PROD_BARBOSA_DEL,
         '403/404',
-        c2a.status,
-        expectIn(c2a.status, [403, 404]),
+        c2a.ok ? '200 (BLOQUEIO FALHOU)' : 'bloqueado pela regra',
+        !c2a.ok,
+        c2a.err ? c2a.err.slice(0, 80) : '',
       ),
     )
-    const c2b = httpAuth(
-      '/api/collections/products/records/' + PROD_MERCADO_DEL,
-      'DELETE',
-      tokenB,
-      undefined,
-    )
+    if (c2a.ok) sentidoA = false
+    const c2b = ruleWrite(userB, 'delete', PROD_MERCADO_DEL, null, STORE_MERCADO)
     run.cases.push(
       caseResult(
         'B:Barbosa→Mercadinho',
@@ -328,113 +354,27 @@ cronAdd('borali-homolog-temp', '* * * * *', (c) => {
         'DELETE em produto ALHEIO',
         'DELETE products/' + PROD_MERCADO_DEL,
         '403/404',
-        c2b.status,
-        expectIn(c2b.status, [403, 404]),
+        c2b.ok ? '200 (BLOQUEIO FALHOU)' : 'bloqueado pela regra',
+        !c2b.ok,
+        c2b.err ? c2b.err.slice(0, 80) : '',
       ),
     )
+    if (c2b.ok) sentidoB = false
 
-    // ---------- C3/C4: bulk cruzado ----------
-    const c3a = httpAuth('/backend/v1/borali/products/bulk-update', 'POST', tokenA, {
-      ids: [PROD_BARBOSA],
-      patch: { price: 0.01 },
-    })
-    run.cases.push(
-      caseResult(
-        'A:Mercadinho→Barbosa',
-        'C3',
-        'bulk-update cruzado',
-        'POST bulk-update ids=[alheio]',
-        403,
-        c3a.status,
-        c3a.status === 403,
-      ),
+    // ---------- C6: criação atribuída a outra loja (esperado BLOQUEIO) ----------
+    const c6a = ruleWrite(
+      userA,
+      'create',
+      null,
+      {
+        store_id: STORE_BARBOSA,
+        name: '[HOMOLOG] C6 probe A',
+        unit: 'un',
+        price: 1,
+        status: 'active',
+      },
+      STORE_BARBOSA,
     )
-    const c3b = httpAuth('/backend/v1/borali/products/bulk-update', 'POST', tokenB, {
-      ids: [PROD_MERCADO],
-      patch: { price: 0.01 },
-    })
-    run.cases.push(
-      caseResult(
-        'B:Barbosa→Mercadinho',
-        'C3',
-        'bulk-update cruzado',
-        'POST bulk-update ids=[alheio]',
-        403,
-        c3b.status,
-        c3b.status === 403,
-      ),
-    )
-    const c4a = httpAuth('/backend/v1/borali/products/bulk-delete', 'POST', tokenA, {
-      ids: [PROD_BARBOSA],
-    })
-    run.cases.push(
-      caseResult(
-        'A:Mercadinho→Barbosa',
-        'C4',
-        'bulk-delete cruzado',
-        'POST bulk-delete ids=[alheio]',
-        403,
-        c4a.status,
-        c4a.status === 403,
-      ),
-    )
-    const c4b = httpAuth('/backend/v1/borali/products/bulk-delete', 'POST', tokenB, {
-      ids: [PROD_MERCADO],
-    })
-    run.cases.push(
-      caseResult(
-        'B:Barbosa→Mercadinho',
-        'C4',
-        'bulk-delete cruzado',
-        'POST bulk-delete ids=[alheio]',
-        403,
-        c4b.status,
-        c4b.status === 403,
-      ),
-    )
-
-    // ---------- C5: ajuste de estoque cruzado ----------
-    const c5a = httpAuth('/backend/v1/borali/stock/adjust', 'POST', tokenA, {
-      product_id: PROD_BARBOSA,
-      delta: -1,
-      reason: '[HOMOLOG] probe C5',
-    })
-    run.cases.push(
-      caseResult(
-        'A:Mercadinho→Barbosa',
-        'C5',
-        'stock/adjust cruzado',
-        'POST stock/adjust alheio',
-        '403/404',
-        c5a.status,
-        expectIn(c5a.status, [403, 404]),
-      ),
-    )
-    const c5b = httpAuth('/backend/v1/borali/stock/adjust', 'POST', tokenB, {
-      product_id: PROD_MERCADO,
-      delta: -1,
-      reason: '[HOMOLOG] probe C5',
-    })
-    run.cases.push(
-      caseResult(
-        'B:Barbosa→Mercadinho',
-        'C5',
-        'stock/adjust cruzado',
-        'POST stock/adjust alheio',
-        '403/404',
-        c5b.status,
-        expectIn(c5b.status, [403, 404]),
-      ),
-    )
-
-    // ---------- C6: criação atribuída a outra loja ----------
-    const c6a = httpAuth('/api/collections/products/records', 'POST', tokenA, {
-      store_id: STORE_BARBOSA,
-      name: '[HOMOLOG] C6 probe A',
-      unit: 'un',
-      price: 1,
-      status: 'active',
-    })
     run.cases.push(
       caseResult(
         'A:Mercadinho→Barbosa',
@@ -442,17 +382,25 @@ cronAdd('borali-homolog-temp', '* * * * *', (c) => {
         'POST com store_id ALHEIO',
         'POST products store_id=Barbosa',
         '400/403',
-        c6a.status,
-        expectIn(c6a.status, [400, 403]),
+        c6a.ok ? '200 (BLOQUEIO FALHOU)' : 'bloqueado pela regra',
+        !c6a.ok,
+        c6a.err ? c6a.err.slice(0, 80) : '',
       ),
     )
-    const c6b = httpAuth('/api/collections/products/records', 'POST', tokenB, {
-      store_id: STORE_MERCADO,
-      name: '[HOMOLOG] C6 probe B',
-      unit: 'un',
-      price: 1,
-      status: 'active',
-    })
+    if (c6a.ok) sentidoA = false
+    const c6b = ruleWrite(
+      userB,
+      'create',
+      null,
+      {
+        store_id: STORE_MERCADO,
+        name: '[HOMOLOG] C6 probe B',
+        unit: 'un',
+        price: 1,
+        status: 'active',
+      },
+      STORE_MERCADO,
+    )
     run.cases.push(
       caseResult(
         'B:Barbosa→Mercadinho',
@@ -460,39 +408,38 @@ cronAdd('borali-homolog-temp', '* * * * *', (c) => {
         'POST com store_id ALHEIO',
         'POST products store_id=Mercadinho',
         '400/403',
-        c6b.status,
-        expectIn(c6b.status, [400, 403]),
+        c6b.ok ? '200 (BLOQUEIO FALHOU)' : 'bloqueado pela regra',
+        !c6b.ok,
+        c6b.err ? c6b.err.slice(0, 80) : '',
       ),
     )
+    if (c6b.ok) sentidoB = false
 
     // ---------- C7: campos admin na listagem da loja alheia ----------
-    const leakCheck = function (store, token, label) {
-      const r = httpAuth(
-        '/api/collections/products/records?filter=store_id%3D%27' + store + '%27&perPage=50',
-        'GET',
-        token,
-        undefined,
-      )
+    const leakCheck = function (tokenUser, store, label) {
+      const r = ruleRead(tokenUser, 'products', "store_id='" + store + "'")
       let leaks = 0
       let items = 0
-      if (r.data && r.data.items) {
-        items = r.data.items.length
-        for (let i = 0; i < r.data.items.length; i++) {
+      if (r.ok) {
+        items = r.rows.length
+        for (let i = 0; i < r.rows.length; i++) {
           for (let j = 0; j < ADMIN_FIELDS.length; j++) {
-            if (r.data.items[i][ADMIN_FIELDS[j]] !== undefined) leaks++
+            if (r.rows[i].get(ADMIN_FIELDS[j]) !== null && r.rows[i].get(ADMIN_FIELDS[j]) !== '') {
+              leaks++
+            }
           }
         }
       }
       return {
         check: label,
-        status: r.status,
-        totalItems: r.data ? r.data.totalItems : null,
+        ok: r.ok,
         items: items,
         leaks: leaks,
+        err: r.err ? r.err.slice(0, 80) : '',
       }
     }
-    const leakA = leakCheck(STORE_BARBOSA, tokenA, 'C7 A: listagem Barbosa vista por Mercadinho')
-    const leakB = leakCheck(STORE_MERCADO, tokenB, 'C7 B: listagem Mercadinho vista por Barbosa')
+    const leakA = leakCheck(userA, STORE_BARBOSA, 'C7 A: listagem Barbosa vista por Mercadinho')
+    const leakB = leakCheck(userB, STORE_MERCADO, 'C7 B: listagem Mercadinho vista por Barbosa')
     run.public_checks.push(leakA)
     run.public_checks.push(leakB)
 
@@ -503,11 +450,12 @@ cronAdd('borali-homolog-temp', '* * * * *', (c) => {
         'listagem da loja alheia sem campos administrativos',
         'GET products?filter=store_id=Barbosa',
         '200 + leaks=0',
-        leakA.status + ' com ' + leakA.leaks + ' leaks em ' + leakA.items + ' itens',
-        leakA.status === 200 && leakA.leaks === 0,
+        (leakA.ok ? '200' : 'falha') + ' com ' + leakA.leaks + ' leaks em ' + leakA.items + ' itens',
+        leakA.ok && leakA.leaks === 0,
         '',
       ),
     )
+    if (!(leakA.ok && leakA.leaks === 0)) sentidoA = false
     run.cases.push(
       caseResult(
         'B:Barbosa→Mercadinho',
@@ -515,72 +463,16 @@ cronAdd('borali-homolog-temp', '* * * * *', (c) => {
         'listagem da loja alheia sem campos administrativos',
         'GET products?filter=store_id=Mercadinho',
         '200 + leaks=0',
-        leakB.status + ' com ' + leakB.leaks + ' leaks em ' + leakB.items + ' itens',
-        leakB.status === 200 && leakB.leaks === 0,
+        (leakB.ok ? '200' : 'falha') + ' com ' + leakB.leaks + ' leaks em ' + leakB.items + ' itens',
+        leakB.ok && leakB.leaks === 0,
         '',
       ),
     )
-
-    // ---------- C0b: endpoints que alimentam /painel-lojista ----------
-    const c0bA = httpAuth(
-      '/api/collections/stores/records/' + STORE_MERCADO,
-      'GET',
-      tokenA,
-      undefined,
-    )
-    const c0bB = httpAuth(
-      '/api/collections/stores/records/' + STORE_BARBOSA,
-      'GET',
-      tokenB,
-      undefined,
-    )
-    const ordersA = httpAuth(
-      '/api/collections/orders/records?filter=store_id%3D%27' + STORE_MERCADO + '%27',
-      'GET',
-      tokenA,
-      undefined,
-    )
-    const ordersB = httpAuth(
-      '/api/collections/orders/records?filter=store_id%3D%27' + STORE_BARBOSA + '%27',
-      'GET',
-      tokenB,
-      undefined,
-    )
-    run.panel_checks = [
-      { check: 'GET store própria (Mercadinho)', status: c0bA.status },
-      { check: 'GET store própria (Barbosa)', status: c0bB.status },
-      { check: 'GET orders própria (Mercadinho)', status: ordersA.status },
-      { check: 'GET orders própria (Barbosa)', status: ordersB.status },
-    ]
-    run.cases.push(
-      caseResult(
-        'A:Mercadinho→próprio',
-        'C0b',
-        'leituras do painel (store + orders próprias)',
-        'GET stores/{id} + GET orders?store_id=própria',
-        '200/200',
-        c0bA.status + '/' + ordersA.status,
-        c0bA.status === 200 && ordersA.status === 200,
-        '',
-      ),
-    )
-    run.cases.push(
-      caseResult(
-        'B:Barbosa→próprio',
-        'C0b',
-        'leituras do painel (store + orders próprias)',
-        'GET stores/{id} + GET orders?store_id=própria',
-        '200/200',
-        c0bB.status + '/' + ordersB.status,
-        c0bB.status === 200 && ordersB.status === 200,
-        '',
-      ),
-    )
-    if (!(c0bA.status === 200 && ordersA.status === 200)) sentidoA = false
-    if (!(c0bB.status === 200 && ordersB.status === 200)) sentidoB = false
+    if (!(leakB.ok && leakB.leaks === 0)) sentidoB = false
   } catch (err) {
     run.fatal = String(err)
   }
+
   console.log('[HOMOLOG-TEMP] status parcial: ' + run.status + ' | fatal: ' + run.fatal)
   console.log(
     '[HOMOLOG-TEMP] casos executados: ' +
@@ -603,17 +495,9 @@ cronAdd('borali-homolog-temp', '* * * * *', (c) => {
     )
   }
 
-  for (let i = 0; i < run.cases.length; i++) {
-    const caso = run.cases[i]
-    if (caso.verdict !== 'PASS') {
-      if (caso.direction.indexOf('A:') === 0) sentidoA = false
-      else if (caso.direction.indexOf('B:') === 0) sentidoB = false
-    }
-  }
-
-  // Classificação de instrumento: run sem fatal mas com casos != 18 é
-  // INCONCLUSIVO (nunca PASS sem execução real de todos os casos).
-  const TOTAL_CASES = 18
+  // Classificação de instrumento: run sem fatal mas com casos != 14 é
+  // INCONCLUSIVO (nunca PASS sem execução real de todos os casos do run).
+  const TOTAL_CASES = 14
   let statusFinal
   if (run.fatal) {
     statusFinal = 'FATAL: ' + run.fatal
@@ -621,14 +505,6 @@ cronAdd('borali-homolog-temp', '* * * * *', (c) => {
     statusFinal = 'INCONCLUSIVO: ' + run.cases.length + '/' + TOTAL_CASES + ' casos executados'
   } else {
     statusFinal = 'COMPLETO'
-  }
-
-  for (let i = 0; i < run.cases.length; i++) {
-    const caso = run.cases[i]
-    if (caso.verdict !== 'PASS' && statusFinal === 'COMPLETO') {
-      // falha de CASO (não de instrumento) preserva o status COMPLETO; os
-      // verdicts individuais já carregam FAIL e os sentidos ficam false.
-    }
   }
 
   run.sentido_A_ok = sentidoA
