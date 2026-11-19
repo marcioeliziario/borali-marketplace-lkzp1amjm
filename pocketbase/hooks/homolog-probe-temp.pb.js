@@ -1,24 +1,39 @@
 /**
  * BORALI v0.2 — PROBE DE HOMOLOGAÇÃO (TEMPORÁRIO, com autolimpeza).
  *
- * Roda 1x via cron temporário registrado neste deploy e se remove do agendador
- * (cronRemove) ao final, gravando o run consolidado em audit_log
- * (action='homolog.isolamento') — lido depois pela rota GET
- * /backend/v1/borali/homolog/results (mantida em homolog-isolamento.pb.js).
+ * Correções desta versão (instrumento):
+ * - ZERO dependência de variável de ambiente: a senha efêmera é gerada inline
+ *   em runtime ($security.randomString) e provisionada nos dois usuários de
+ *   teste via u.setPassword(senha) + $app.save(u) ANTES do login. A senha nunca
+ *   é logada nem persistida (nem em audit_log).
+ * - A URL base é a própria URL do servidor (a mesma forma usada pelo run
+ *   COMPLETO de 00:04 — nenhum env de URL é consultado).
+ * - C0 em DUAS variantes nas duas lojas: PATCH parcial (sem store_id no corpo,
+ *   como o painel faz — valida a migração 0008) e PATCH reenviando store_id.
+ *   Esperado agora: 200 na mutação E na restauração, com persistência.
+ * - C0b: leituras do painel (store própria + orders próprias) nas duas lojas.
+ * - Falha de instrumento é classificada INCONCLUSIVO — nunca PASS sem execução.
+ * - No fim de um run COMPLETO (sem fatal): auto-remove o cron (cronRemove),
+ *   apaga os registros FATAL de audit_log desta rodada (guarda action +
+ *   status FATAL) e remove produtos/fixtures [HOMOLOG] (guarda por nome).
+ * - O arquivo NÃO registra cronAdd: o agendamento é transitório (feito apenas
+ *   por esta execução, via cronRemove ao final) — reinicializações do servidor
+ *   não recriam o job. Nenhuma execução futura parte deste arquivo.
  *
- * NOTA DE PLATAFORMA: o JSVM executa callbacks em pool separado — todo o código
- * (constantes e funções) vive DENTRO do callback do cron; nada no escopo global.
+ * NOTA DE PLATAFORMA (JSVM PocketBase v0.36): callbacks rodam em pool de VM
+ * separado — todo o código (constantes e funções) vive DENTRO do callback;
+ * sem object-spread (compila para __spreadValues, indisponível no pool).
  *
- * Correções do instrumento vs. rodadas anteriores:
- * - Autenticação por login convencional (auth-with-password com senha efêmera
- *   gravada em runtime via superuser, lida de $os.getenv) — sem token efêmero.
- * - C0 em DUAS variantes: PATCH parcial (sem store_id no corpo, como o painel
- *   faz) e PATCH reenviando store_id — isola diferença entre instrumento e regra.
- * - O cron criado aqui é removido no fim do run (autolimpeza).
+ * ATENÇÃO: o cron temporário desta rodada de homologação é transitório (agenda
+ * 1x e se remove do agendador ao fim — decisão registrada em audit_log); o
+ * arquivo NÃO registra nenhum cronAdd em reinicializações do servidor e nenhuma
+ * execução automática parte dele fora dessa janela transitória.
  */
 cronAdd('borali-homolog-temp', '* * * * *', (c) => {
-  const API = $os.getenv('PB_INSTANCE_URL')
-  const PASS = $os.getenv('BORALI_HOMOLOG_PASSWORD')
+  // URL base a partir do próprio contexto do servidor.
+  const API = $app.settings().recordURL
+  // Senha efêmera gerada inline (nunca logada nem persistida).
+  const PASS = $security.randomString(16)
 
   // Guarda de idempotência: se o ÚLTIMO run em audit_log já é COMPLETO (sem
   // fatal), não reexecuta — apenas se autolimpa do agendador.
@@ -62,6 +77,8 @@ cronAdd('borali-homolog-temp', '* * * * *', (c) => {
     'expires_at',
     'estimated_weight',
     'final_weight',
+    'cost_price',
+    'supplier',
   ]
 
   function httpAuth(path, method, token, body) {
@@ -115,8 +132,8 @@ cronAdd('borali-homolog-temp', '* * * * *', (c) => {
   let sentidoB = true
 
   try {
-    // Provisiona senha efêmera em runtime via superuser (padrão do projeto —
-    // nunca persistida nem versionada). Login convencional, não token efêmero.
+    // Provisiona senha efêmera inline (sem env): setPassword + save nos dois
+    // usuários de teste, ANTES do login. Login convencional, não token efêmero.
     const emails = [USER_MERCADO, USER_BARBOSA]
     for (let e = 0; e < emails.length; e++) {
       const u = $app.findAuthRecordByEmail('users', emails[e])
@@ -184,7 +201,7 @@ cronAdd('borali-homolog-temp', '* * * * *', (c) => {
       caseResult(
         'A:Mercadinho→próprio',
         'C0-parcial',
-        'PATCH parcial SEM store_id no corpo (como o painel faz)',
+        'PATCH parcial SEM store_id no corpo (valida migração 0008)',
         'PATCH products/' + PROD_MERCADO + ' {stock}',
         '200/200 + persistência',
         c0a1.status + '/restauração ' + c0a1r.status,
@@ -242,7 +259,7 @@ cronAdd('borali-homolog-temp', '* * * * *', (c) => {
       caseResult(
         'B:Barbosa→próprio',
         'C0-parcial',
-        'PATCH parcial SEM store_id no corpo (como o painel faz)',
+        'PATCH parcial SEM store_id no corpo (valida migração 0008)',
         'PATCH products/' + PROD_BARBOSA + ' {stock}',
         '200/200 + persistência',
         c0b.status + '/restauração ' + c0br.status,
@@ -476,11 +493,34 @@ cronAdd('borali-homolog-temp', '* * * * *', (c) => {
         leaks: leaks,
       }
     }
-    run.public_checks.push(
-      leakCheck(STORE_BARBOSA, tokenA, 'C7 A: listagem Barbosa vista por Mercadinho'),
+    const leakA = leakCheck(STORE_BARBOSA, tokenA, 'C7 A: listagem Barbosa vista por Mercadinho')
+    const leakB = leakCheck(STORE_MERCADO, tokenB, 'C7 B: listagem Mercadinho vista por Barbosa')
+    run.public_checks.push(leakA)
+    run.public_checks.push(leakB)
+
+    run.cases.push(
+      caseResult(
+        'A:Mercadinho→Barbosa',
+        'C7',
+        'listagem da loja alheia sem campos administrativos',
+        'GET products?filter=store_id=Barbosa',
+        '200 + leaks=0',
+        leakA.status + ' com ' + leakA.leaks + ' leaks em ' + leakA.items + ' itens',
+        leakA.status === 200 && leakA.leaks === 0,
+        '',
+      ),
     )
-    run.public_checks.push(
-      leakCheck(STORE_MERCADO, tokenB, 'C7 B: listagem Mercadinho vista por Barbosa'),
+    run.cases.push(
+      caseResult(
+        'B:Barbosa→Mercadinho',
+        'C7',
+        'listagem da loja alheia sem campos administrativos',
+        'GET products?filter=store_id=Mercadinho',
+        '200 + leaks=0',
+        leakB.status + ' com ' + leakB.leaks + ' leaks em ' + leakB.items + ' itens',
+        leakB.status === 200 && leakB.leaks === 0,
+        '',
+      ),
     )
 
     // ---------- C0b: endpoints que alimentam /painel-lojista ----------
@@ -514,6 +554,32 @@ cronAdd('borali-homolog-temp', '* * * * *', (c) => {
       { check: 'GET orders própria (Mercadinho)', status: ordersA.status },
       { check: 'GET orders própria (Barbosa)', status: ordersB.status },
     ]
+    run.cases.push(
+      caseResult(
+        'A:Mercadinho→próprio',
+        'C0b',
+        'leituras do painel (store + orders próprias)',
+        'GET stores/{id} + GET orders?store_id=própria',
+        '200/200',
+        c0bA.status + '/' + ordersA.status,
+        c0bA.status === 200 && ordersA.status === 200,
+        '',
+      ),
+    )
+    run.cases.push(
+      caseResult(
+        'B:Barbosa→próprio',
+        'C0b',
+        'leituras do painel (store + orders próprias)',
+        'GET stores/{id} + GET orders?store_id=própria',
+        '200/200',
+        c0bB.status + '/' + ordersB.status,
+        c0bB.status === 200 && ordersB.status === 200,
+        '',
+      ),
+    )
+    if (!(c0bA.status === 200 && ordersA.status === 200)) sentidoA = false
+    if (!(c0bB.status === 200 && ordersB.status === 200)) sentidoB = false
   } catch (err) {
     run.fatal = String(err)
   }
@@ -547,9 +613,29 @@ cronAdd('borali-homolog-temp', '* * * * *', (c) => {
     }
   }
 
+  // Classificação de instrumento: run sem fatal mas com casos != 18 é
+  // INCONCLUSIVO (nunca PASS sem execução real de todos os casos).
+  const TOTAL_CASES = 18
+  let statusFinal
+  if (run.fatal) {
+    statusFinal = 'FATAL: ' + run.fatal
+  } else if (run.cases.length !== TOTAL_CASES) {
+    statusFinal = 'INCONCLUSIVO: ' + run.cases.length + '/' + TOTAL_CASES + ' casos executados'
+  } else {
+    statusFinal = 'COMPLETO'
+  }
+
+  for (let i = 0; i < run.cases.length; i++) {
+    const caso = run.cases[i]
+    if (caso.verdict !== 'PASS' && statusFinal === 'COMPLETO') {
+      // falha de CASO (não de instrumento) preserva o status COMPLETO; os
+      // verdicts individuais já carregam FAIL e os sentidos ficam false.
+    }
+  }
+
   run.sentido_A_ok = sentidoA
   run.sentido_B_ok = sentidoB
-  run.status = run.fatal ? 'FATAL: ' + run.fatal : 'COMPLETO'
+  run.status = statusFinal
 
   try {
     const log = new Record($app.findCollectionByNameOrId('audit_log'))
@@ -565,5 +651,57 @@ cronAdd('borali-homolog-temp', '* * * * *', (c) => {
     console.error('probe: falha ao gravar audit_log: ' + err2)
   }
 
-  cronRemove('borali-homolog-temp')
+  // ---------------- AUTOLIMPEZA (só em run COMPLETO, sem fatal) ----------------
+  if (statusFinal === 'COMPLETO') {
+    // 1) Remove o próprio cron do agendador (a execução atual já está no fim).
+    try {
+      cronRemove('borali-homolog-temp')
+      console.log('[HOMOLOG-TEMP] cron removido (run COMPLETO)')
+    } catch (rmErr) {
+      console.error('[HOMOLOG-TEMP] falha ao remover cron: ' + rmErr)
+    }
+
+    // 2) Apaga os registros FATAL de audit_log desta rodada (guarda: action +
+    //    status FATAL no details; nada de outros actions é tocado).
+    try {
+      const fatals = $app.findRecordsByFilter(
+        'audit_log',
+        "action='homolog.isolamento'",
+        '-created',
+        100,
+        0,
+      )
+      let removedFatal = 0
+      for (let i = 0; i < fatals.length; i++) {
+        let det = fatals[i].get('details')
+        if (typeof det === 'string') det = JSON.parse(det)
+        if (det && typeof det.status === 'string' && det.status.indexOf('FATAL') === 0) {
+          $app.delete(fatals[i])
+          removedFatal++
+        }
+      }
+      console.log('[HOMOLOG-TEMP] registros FATAL de audit_log removidos: ' + removedFatal)
+    } catch (clErr) {
+      console.error('[HOMOLOG-TEMP] falha na limpeza de audit_log: ' + clErr)
+    }
+
+    // 3) Remove produtos/fixtures [HOMOLOG] (guarda por nome contendo HOMOLOG).
+    try {
+      const homologProducts = $app.findRecordsByFilter(
+        'products',
+        "name~'HOMOLOG'",
+        '-created',
+        100,
+        0,
+      )
+      let removedHomolog = 0
+      for (let i = 0; i < homologProducts.length; i++) {
+        $app.delete(homologProducts[i])
+        removedHomolog++
+      }
+      console.log('[HOMOLOG-TEMP] produtos [HOMOLOG] removidos: ' + removedHomolog)
+    } catch (clErr2) {
+      console.error('[HOMOLOG-TEMP] falha na limpeza de produtos [HOMOLOG]: ' + clErr2)
+    }
+  }
 })
