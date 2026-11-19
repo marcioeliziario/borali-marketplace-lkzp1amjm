@@ -15,6 +15,9 @@
 onRecordEnrich((e) => {
   // Declarações inline — o JSVM do PocketBase não permite referenciar
   // declarações de top-level dentro de callbacks (scoping por VM pool).
+  //
+  // API CORRETA (PB v0.36): e.requestInfo é PROPRIEDADE (não função) e
+  // e.auth pode ser null para convidados — é o caso do catálogo público.
   const adminFields = [
     'stock',
     'min_stock',
@@ -27,16 +30,27 @@ onRecordEnrich((e) => {
     'cost_price',
     'supplier',
   ]
-  const auth = e.requestInfo().auth
+  const info = e.requestInfo
+  const auth = info ? info.auth : null
   const rec = e.record
-  const isSuperuser = !!auth && auth.get('collectionName') === '_superusers'
-  const isOwner =
-    !!auth && auth.get('role') === 'merchant' && auth.get('store_id') === rec.get('store_id')
-  const isAdmin = !!auth && auth.get('role') === 'admin'
 
-  if (!isSuperuser && !isAdmin && !isOwner) {
-    for (const f of adminFields) {
-      rec.hide(f)
+  let canSeeAdmin = false
+  if (info && typeof info.hasSuperuserAuth === 'function' && info.hasSuperuserAuth()) {
+    canSeeAdmin = true
+  } else if (auth) {
+    const role = auth.get('role') || ''
+    const authStore = auth.get('store_id') || ''
+    if (
+      role === 'admin' ||
+      (role === 'merchant' && authStore && authStore === rec.get('store_id'))
+    ) {
+      canSeeAdmin = true
+    }
+  }
+
+  if (!canSeeAdmin) {
+    for (let i = 0; i < adminFields.length; i++) {
+      rec.hide(adminFields[i])
     }
   }
   return e.next()

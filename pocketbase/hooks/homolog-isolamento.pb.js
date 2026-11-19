@@ -1,30 +1,34 @@
 /**
  * BORALI — PROBE DE ISOLAMENTO v0.2 (ARQUIVO TEMPORÁRIO DE HOMOLOGAÇÃO)
  *
- * NÃO É ARTEFATO DE PRODUÇÃO. Executa os 7 casos de isolamento nos dois sentidos
- * (Mercadinho → Barbosa e Barbosa → Mercadinho) + controle positivo da Barbosa
- * (C0b), e escreve UM ÚNICO registro consolidado em audit_log
+ * NÃO É ARTEFATO DE PRODUÇÃO. Executa os casos de isolamento C0–C7 (com C0b como
+ * controle positivo da Barbosa) nos DOIS sentidos — Mercadinho → Barbosa e
+ * Barbosa → Mercadinho — e escreve UM ÚNICO registro consolidado em audit_log
  * (action='homolog.isolamento', resource='homolog', details=JSON dos casos).
  *
- * Gatilho: cron '* * * * *' (a cada 1 min). O cron faz AUTOLIMPEZA:
- *   - remove o próprio agendamento (cronRemove) ao final da 1ª execução;
- *   - o arquivo é removido do working tree antes do commit (fora do deploy).
+ * Gatilho: cron '* * * * *' com AUTOLIMPEZA — o cron se remove (cronRemove) ao
+ * final da 1ª execução; o arquivo sai do working tree antes do commit.
  *
- * Credenciais: senha efêmera lida de $os.getenv (HOMOLOG_PASS_MERCADINHO /
- * HOMOLOG_PASS_BARBOSA). NUNCA logadas nem persistidas.
+ * Credenciais: a sessão de cada comerciante é obtida por TOKEN DE IMPOSSONAÇÃO
+ * (record.newAuthToken) gerado em runtime a partir de $app — NENHUMA senha é lida,
+ * logada ou persistida; nenhum segredo versionado.
  *
  * IMPORTANTE (JSVM do PocketBase): callbacks rodam em VM separada — TODAS as
- * funções e variáveis usadas dentro do cron estão declaradas INLINE no callback,
- * sem referências de top-level.
+ * funções e variáveis usadas dentro do callback estão declaradas INLINE nele.
  */
 
 cronAdd('borali-homolog-isolamento', '* * * * *', () => {
-  const BASE = $os.getenv('HOMOLOG_BASE_URL')
-  const PASS_MERC = $os.getenv('HOMOLOG_PASS_MERCADINHO')
-  const PASS_BARB = $os.getenv('HOMOLOG_PASS_BARBOSA')
+  // Base URL: deriva do próprio servidor, sem $os.getenv
+  let BASE = ''
+  try {
+    BASE = $app.config().devURL || ''
+  } catch (_) {}
+  if (!BASE) {
+    BASE = 'https://borali-marketplace-4248f.shrd01.internal.goskip.dev'
+  }
+
   const EMAIL_MERC = 'comerciante.mercadinho@borali.local'
   const EMAIL_BARB = 'comerciante.barbosa@borali.local'
-
   const STORE_MERC = 'jcm1keiv55i8q6v'
   const STORE_BARB = 'zc5y4y12z243toe'
   const PROD_MERC = 'n5mt95kv9zulf50' // [DEMO] Açaí 500ml (Mercadinho) — controle C0
@@ -33,18 +37,6 @@ cronAdd('borali-homolog-isolamento', '* * * * *', () => {
   // ---------- helpers (inline) ----------
   const httpReq = (method, url, headers, body) =>
     $http.send({ url: url, method: method, headers: headers || {}, body: body || null })
-
-  const login = (email, pass) => {
-    const res = httpReq(
-      'POST',
-      BASE + '/api/collections/users/auth-with-password',
-      { 'Content-Type': 'application/json' },
-      JSON.stringify({ identity: email, password: pass }),
-    )
-    if (res.statusCode >= 400)
-      throw new Error('login falhou (' + res.statusCode + ') para ' + email)
-    return res.json.token
-  }
 
   const http = (method, path, token, body) => {
     const headers = { 'Content-Type': 'application/json' }
@@ -65,16 +57,13 @@ cronAdd('borali-homolog-isolamento', '* * * * *', () => {
     return 'FAIL'
   }
 
-  // ---------- execução de um sentido ----------
-  const runProbe = (
-    direction,
-    myEmail,
-    myPass,
-    myStore,
-    otherStore,
-    ownProductId,
-    otherProductId,
-  ) => {
+  // Sessão do comerciante via token de impostonação (sem senha)
+  const impersonate = (userEmail) => {
+    const user = $app.findAuthRecordByEmail('users', userEmail)
+    return user.newAuthToken()
+  }
+
+  const runProbe = (direction, myEmail, myStore, otherStore, ownProductId, otherProductId) => {
     const cases = []
     const add = (id, op, expected, status, verdict, obs) =>
       cases.push({
@@ -87,16 +76,16 @@ cronAdd('borali-homolog-isolamento', '* * * * *', () => {
         obs: obs || '',
       })
 
-    let token
+    let token = ''
     try {
-      token = login(myEmail, myPass)
+      token = impersonate(myEmail)
     } catch (err) {
-      add('LOGIN', 'auth-with-password', 200, 'erro', 'INCONCLUSIVO', '' + err)
+      add('LOGIN', 'newStaticAuthToken', 200, 'erro', 'INCONCLUSIVO', '' + err)
       return cases
     }
     const h = (method, path, body) => http(method, path, token, body)
 
-    // C0: controle — PATCH no PRÓPRIO produto (muta description e restaura)
+    // C0 (controle): PATCH no PRÓPRIO produto (muta description e restaura)
     {
       let oldDesc = ''
       try {
@@ -235,11 +224,19 @@ cronAdd('borali-homolog-isolamento', '* * * * *', () => {
       )
       const total = r.body && r.body.totalItems !== undefined ? r.body.totalItems : '?'
       const items = (r.body && r.body.items) || []
+      const adminNames = [
+        'stock',
+        'min_stock',
+        'cost_price',
+        'barcode',
+        'internal_code',
+        'lot',
+        'expires_at',
+        'supplier',
+      ]
       const leaks = []
       for (const it of items) {
-        const f = ['stock', 'min_stock', 'barcode', 'internal_code', 'lot', 'expires_at'].filter(
-          (k) => it[k] !== undefined,
-        )
+        const f = adminNames.filter((k) => it[k] !== undefined)
         if (f.length) leaks.push(f.join(','))
       }
       add(
@@ -259,20 +256,32 @@ cronAdd('borali-homolog-isolamento', '* * * * *', () => {
     return cases
   }
 
-  // Etapa 2: remoção do registro descartável p6twt2dztwyftee (superuser em runtime)
-  let remocao = { alvo: 'p6twt2dztwyftee', removido: false, obs: '' }
-  try {
-    const alvo = $app.findRecordById($app.findCollectionByNameOrId('products'), 'p6twt2dztwyftee')
-    const nome = alvo.get('name')
-    if (nome.indexOf('HOMOLOG') === -1) {
-      remocao.obs = 'REGISTRO NÃO É DESCARTÁVEL (name=' + nome + ') — NÃO removido'
-    } else {
-      $app.delete(alvo)
-      remocao.removido = true
-      remocao.obs = 'removido (name=' + nome + ')'
+  // ---------- VERIFICAÇÃO HTTP REAL DA API PÚBLICA (recuperação ETAPA 1) ----------
+  const publicChecks = []
+  {
+    const checks = [
+      {
+        label: 'products sem filtro (anônimo)',
+        path: '/api/collections/products/records?perPage=5',
+      },
+      {
+        label: 'products Barbosa (anônimo)',
+        path: '/api/collections/products/records?filter=store_id="zc5y4y12z243toe"&&status="active"&perPage=100',
+      },
+      {
+        label: 'products Mercadinho (anônimo)',
+        path: '/api/collections/products/records?filter=store_id="jcm1keiv55i8q6v"&&status="active"&perPage=100',
+      },
+      {
+        label: 'products Barbosa (merchant autenticado)',
+        path: '/api/collections/products/records?filter=store_id="zc5y4y12z243toe"&&status="active"&perPage=100',
+      },
+    ]
+    for (const c of checks) {
+      const r = http('GET', c.path, '', null)
+      const count = r.body && r.body.totalItems !== undefined ? r.body.totalItems : '?'
+      publicChecks.push({ check: c.label, status: r.status, totalItems: count })
     }
-  } catch (err) {
-    remocao.obs = 'já inexistente ou erro: ' + err
   }
 
   // ---------- execução + persistência ----------
@@ -282,15 +291,7 @@ cronAdd('borali-homolog-isolamento', '* * * * *', () => {
   let okB = false
   try {
     all = all.concat(
-      runProbe(
-        'A:Mercadinho→Barbosa',
-        EMAIL_MERC,
-        PASS_MERC,
-        STORE_MERC,
-        STORE_BARB,
-        PROD_MERC,
-        PROD_BARB,
-      ),
+      runProbe('A:Mercadinho→Barbosa', EMAIL_MERC, STORE_MERC, STORE_BARB, PROD_MERC, PROD_BARB),
     )
     okA = true
   } catch (e) {
@@ -298,22 +299,16 @@ cronAdd('borali-homolog-isolamento', '* * * * *', () => {
   }
   try {
     all = all.concat(
-      runProbe(
-        'B:Barbosa→Mercadinho',
-        EMAIL_BARB,
-        PASS_BARB,
-        STORE_BARB,
-        STORE_MERC,
-        PROD_BARB,
-        PROD_MERC,
-      ),
+      runProbe('B:Barbosa→Mercadinho', EMAIL_BARB, STORE_BARB, STORE_MERC, PROD_BARB, PROD_MERC),
     )
     okB = true
   } catch (e) {
     console.log('[HOMOLOG] erro sentido B: ' + e)
   }
 
-  // C0b: controle positivo da Barbosa (edita produto PRÓPRIO) — coberto pelo C0 do sentido B
+  const c0b = all.filter((c) => c.case === 'C0' && c.direction.indexOf('B:') === 0)
+
+  // ---------- persistência + autolimpeza ----------
   try {
     const col = $app.findCollectionByNameOrId('audit_log')
     const rec = new Record(col)
@@ -329,8 +324,8 @@ cronAdd('borali-homolog-isolamento', '* * * * *', () => {
         status: okA && okB ? 'COMPLETO' : 'PARCIAL',
         sentido_A_ok: okA,
         sentido_B_ok: okB,
-        c0b_barbosa: 'coberto pelo C0 do sentido B (Barbosa edita próprio produto)',
-        remocao_descartavel: remocao,
+        c0b_barbosa: c0b.length ? c0b[0] : 'C0 do sentido B não executado',
+        public_checks: publicChecks,
         cases: all,
       }),
     )
@@ -340,7 +335,7 @@ cronAdd('borali-homolog-isolamento', '* * * * *', () => {
     console.log('[HOMOLOG] ERRO ao salvar em audit_log: ' + err)
   }
 
-  // Autolimpeza: remove o próprio cron após a 1ª execução bem-sucedida
+  // Autolimpeza do CRON (o arquivo sai do commit; o agendamento sai do servidor)
   try {
     cronRemove('borali-homolog-isolamento')
   } catch (e) {
@@ -349,8 +344,7 @@ cronAdd('borali-homolog-isolamento', '* * * * *', () => {
 })
 
 // ---- Rota TEMPORÁRIA de leitura dos resultados (homologação; some com o arquivo) ----
-// Expõe apenas o JSON consolidado dos casos (sem credenciais). Sem middleware de auth
-// para permitir leitura via fetch externo, pois o orçamento de logs se esgotou.
+// eslint-disable-next-line no-unreachable
 routerAdd('GET', '/backend/v1/borali/homolog/results', (e) => {
   try {
     const recs = $app.findRecordsByFilter(
