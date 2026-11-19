@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-18T23:57:53.632Z",
+  "generatedAt": "2026-11-19T00:17:01.582Z",
   "collections": [
     {
       "name": "users",
@@ -380,7 +380,7 @@
         "list": "@request.auth.role = 'admin' || (@request.auth.store_id != '' && @request.auth.store_id = store_id) || status = 'active'",
         "view": "@request.auth.role = 'admin' || (@request.auth.store_id != '' && @request.auth.store_id = store_id) || status = 'active'",
         "create": "@request.auth.role = 'admin' || (@request.auth.role = 'merchant' && @request.auth.store_id = @request.body.store_id)",
-        "update": "@request.auth.role = 'admin' || (@request.auth.role = 'merchant' && @request.auth.store_id = store_id && store_id = @request.body.store_id)",
+        "update": "@request.auth.role = 'admin' || (@request.auth.role = 'merchant' && @request.auth.store_id = store_id && @request.body.store_id:changed = false)",
         "delete": "@request.auth.role = 'admin' || (@request.auth.role = 'merchant' && @request.auth.store_id = store_id)"
       },
       "fields": [

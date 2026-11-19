@@ -14,7 +14,13 @@
 
 routerAdd('GET', '/backend/v1/borali/homolog/results', (e) => {
   try {
-    const recs = $app.findRecordsByFilter('audit_log', "action='homolog.isolamento'", '-created', 1, 0)
+    const recs = $app.findRecordsByFilter(
+      'audit_log',
+      "action='homolog.isolamento'",
+      '-created',
+      1,
+      0,
+    )
     if (!recs || recs.length === 0) {
       return e.json(200, { status: 'pendente', obs: 'nenhum run registrado ainda' })
     }
