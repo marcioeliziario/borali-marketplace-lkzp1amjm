@@ -31,7 +31,7 @@
  */
 cronAdd('borali-homolog-temp', '* * * * *', (c) => {
   // URL base a partir do próprio contexto do servidor.
-  const API = $app.settings().recordURL
+  const API = String($app.settings().meta.appURL || '').replace(/\/+$/, '')
   // Senha efêmera gerada inline (nunca logada nem persistida).
   const PASS = $security.randomString(16)
 
