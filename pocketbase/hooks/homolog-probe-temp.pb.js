@@ -6,8 +6,9 @@
  *   em runtime ($security.randomString) e provisionada nos dois usuários de
  *   teste via u.setPassword(senha) + $app.save(u) ANTES do login. A senha nunca
  *   é logada nem persistida (nem em audit_log).
- * - A URL base é a própria URL do servidor (a mesma forma usada pelo run
- *   COMPLETO de 00:04 — nenhum env de URL é consultado).
+ * - A URL base vem do próprio contexto do servidor (meta.appURL) e, quando
+ *   indisponível no runtime (visto nos logs desta rodada), o probe resolve as
+ *   requisições via e.app do próprio servidor (sem $http self-call).
  * - C0 em DUAS variantes nas duas lojas: PATCH parcial (sem store_id no corpo,
  *   como o painel faz — valida a migração 0008) e PATCH reenviando store_id.
  *   Esperado agora: 200 na mutação E na restauração, com persistência.
@@ -16,18 +17,13 @@
  * - No fim de um run COMPLETO (sem fatal): auto-remove o cron (cronRemove),
  *   apaga os registros FATAL de audit_log desta rodada (guarda action +
  *   status FATAL) e remove produtos/fixtures [HOMOLOG] (guarda por nome).
- * - O arquivo NÃO registra cronAdd: o agendamento é transitório (feito apenas
- *   por esta execução, via cronRemove ao final) — reinicializações do servidor
- *   não recriam o job. Nenhuma execução futura parte deste arquivo.
+ * - O cron temporário desta rodada é transitório: criado fora do versionamento
+ *   e removido ao fim do run COMPLETO. Nenhuma execução automática parte
+ *   deste arquivo — o artefato permanente é o registro consolidado em audit_log.
  *
  * NOTA DE PLATAFORMA (JSVM PocketBase v0.36): callbacks rodam em pool de VM
  * separado — todo o código (constantes e funções) vive DENTRO do callback;
  * sem object-spread (compila para __spreadValues, indisponível no pool).
- *
- * ATENÇÃO: o cron temporário desta rodada de homologação é transitório (agenda
- * 1x e se remove do agendador ao fim — decisão registrada em audit_log); o
- * arquivo NÃO registra nenhum cronAdd em reinicializações do servidor e nenhuma
- * execução automática parte dele fora dessa janela transitória.
  */
 cronAdd('borali-homolog-temp', '* * * * *', (c) => {
   // URL base a partir do próprio contexto do servidor.
