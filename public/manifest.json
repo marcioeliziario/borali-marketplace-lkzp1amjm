@@ -1,0 +1,16 @@
+{
+  "name": "Borali - Sua cidade mais perto de você",
+  "short_name": "Borali",
+  "description": "Marketplace e digitalização do comércio local de Óbidos e região",
+  "start_url": "/obidos",
+  "display": "standalone",
+  "background_color": "#F5F7FA",
+  "theme_color": "#1754AE",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}
