@@ -47,8 +47,12 @@ onRecordBeforeCreateRequest((e) => {
       throw new NotFoundError('Cidade não encontrada: ' + cityId)
     }
 
-    const cityStatus = city.get('status') || 'active'
-    if (cityStatus !== 'active') {
+    // Rejeitar cidades com status ausente, desconhecido ou diferente de 'active'
+    const cityStatus = city.get('status')
+    const cityIsActive = city.get('is_active')
+
+    // Bloquear se status não for exatamente 'active' ou se is_active não for true
+    if (!cityStatus || !['preparation', 'onboarding', 'active', 'suspended'].includes(cityStatus) || cityStatus !== 'active' || cityIsActive !== true) {
       try {
         const auditLog = new Record(e.app.findCollectionByNameOrId('audit_log'))
         auditLog.set('user_id', auth.get('id'))
