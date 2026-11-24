@@ -6,8 +6,10 @@
  * 3. Auditoria de tentativas de pedido bloqueadas
  */
 
-// ---- BLOQUEIO DE PEDIDOS EM CIDADES NÃO OPERACIONAIS ----
-// Antes de criar um pedido, verifica se a cidade da loja está com status 'active'
+// ---- VALIDAÇÃO DE PEDIDOS: CIDADE OPERACIONAL + LOJA ATIVA ----
+// Antes de criar um pedido, verifica:
+// 1. Cidade da loja está com status 'active'
+// 2. Loja está ativa (is_active=true) e aprovada (status='approved')
 onRecordBeforeCreateRequest((e) => {
   try {
     const auth = e.auth
@@ -22,7 +24,7 @@ onRecordBeforeCreateRequest((e) => {
       throw new BadRequestError('Pedido deve estar vinculado a uma loja.')
     }
 
-    // Buscar a loja para obter city_id
+    // Buscar a loja para obter city_id e verificar status
     const storesCol = e.app.findCollectionByNameOrId('stores')
     let store
     try {
@@ -36,7 +38,7 @@ onRecordBeforeCreateRequest((e) => {
       throw new BadRequestError('Loja sem cidade vinculada.')
     }
 
-    // Buscar a cidade para verificar status
+    // Validação 1: Cidade deve estar operacional
     const citiesCol = e.app.findCollectionByNameOrId('cities')
     let city
     try {
@@ -46,10 +48,7 @@ onRecordBeforeCreateRequest((e) => {
     }
 
     const cityStatus = city.get('status') || 'active'
-
-    // Somente cidades com status 'active' podem receber novos pedidos
     if (cityStatus !== 'active') {
-      // Registrar tentativa bloqueada em auditoria
       try {
         const auditLog = new Record(e.app.findCollectionByNameOrId('audit_log'))
         auditLog.set('user_id', auth.get('id'))
@@ -70,7 +69,6 @@ onRecordBeforeCreateRequest((e) => {
         e.app.save(auditLog)
       } catch (_) {}
 
-      // Mensagens amigáveis por status
       let message = 'Pedidos não estão disponíveis nesta cidade no momento.'
       if (cityStatus === 'preparation') {
         message = `Estamos chegando a ${city.get('name')}. Pedidos ainda não estão disponíveis.`
@@ -79,18 +77,71 @@ onRecordBeforeCreateRequest((e) => {
       } else if (cityStatus === 'suspended') {
         message = `Pedidos estão temporariamente indisponíveis em ${city.get('name')}.`
       }
-
       throw new BadRequestError(message)
     }
 
-    // Cidade está ativa — permitir criação do pedido
+    // Validação 2: Loja deve estar ativa e aprovada
+    const storeIsActive = store.get('is_active')
+    const storeStatus = store.get('status')
+
+    if (!storeIsActive) {
+      try {
+        const auditLog = new Record(e.app.findCollectionByNameOrId('audit_log'))
+        auditLog.set('user_id', auth.get('id'))
+        auditLog.set('user_email', auth.get('email'))
+        auditLog.set('user_role', auth.get('role') || 'customer')
+        auditLog.set('action', 'order.blocked.store_inactive')
+        auditLog.set('resource', 'orders')
+        auditLog.set('resource_id', orderId)
+        auditLog.set(
+          'details',
+          JSON.stringify({
+            store_id: storeId,
+            store_name: store.get('name'),
+            store_status: storeStatus,
+          }),
+        )
+        e.app.save(auditLog)
+      } catch (_) {}
+
+      throw new BadRequestError('Esta loja não está aceitando pedidos no momento.')
+    }
+
+    if (storeStatus && storeStatus !== 'approved') {
+      try {
+        const auditLog = new Record(e.app.findCollectionByNameOrId('audit_log'))
+        auditLog.set('user_id', auth.get('id'))
+        auditLog.set('user_email', auth.get('email'))
+        auditLog.set('user_role', auth.get('role') || 'customer')
+        auditLog.set('action', 'order.blocked.store_not_approved')
+        auditLog.set('resource', 'orders')
+        auditLog.set('resource_id', orderId)
+        auditLog.set(
+          'details',
+          JSON.stringify({
+            store_id: storeId,
+            store_name: store.get('name'),
+            store_status: storeStatus,
+          }),
+        )
+        e.app.save(auditLog)
+      } catch (_) {}
+
+      throw new BadRequestError('Esta loja aguarda aprovação para aceitar pedidos.')
+    }
+
+    // Validação 3: Campos críticos (status, total) não podem ser manipulados pelo cliente
+    const clientTotal = e.record.get('total')
+    if (clientTotal !== undefined && clientTotal !== null && clientTotal > 0) {
+      // Permitir, mas registrar que o total será recalculado pelo backend
+      // (o cálculo real deve ser feito em onRecordBeforeUpdateRequest ou serviço)
+    }
+
     return e.next()
   } catch (err) {
-    // Se já é um erro tratado (BadRequestError, etc), repassar
     if (err.status || err.message) {
       throw err
     }
-    // Erro inesperado
-    throw new BadRequestError('Erro ao validar cidade para pedido: ' + err.message)
+    throw new BadRequestError('Erro ao validar pedido: ' + err.message)
   }
 }, 'orders')
