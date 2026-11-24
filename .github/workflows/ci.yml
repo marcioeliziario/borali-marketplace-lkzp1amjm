@@ -5,6 +5,7 @@ on:
  branches: [main, development-integrado]
  push:
  branches: [development-integrado]
+ workflow_dispatch:
 
 jobs:
  validate:
