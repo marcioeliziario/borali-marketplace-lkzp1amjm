@@ -69,3 +69,30 @@ Conforme a Seção 14 da especificação:
 - **v0.5:** Gestão financeira, comissões e conciliação.
 - **v0.6:** Integração oficial com WhatsApp.
 - **v1.0:** Lançamento comercial oficial em Óbidos/PA.
+
+---
+
+## 6. Homologação Técnica e Testes
+
+Para garantir a estabilidade e segurança da plataforma, utilize os scripts de homologação local:
+
+### Ambiente PocketBase Isolado
+O script `scripts/setup-pb-test.sh` configura uma instância descartável do PocketBase compatível com macOS (Intel/Apple Silicon) e Linux:
+
+```bash
+# Iniciar ambiente e rodar testes automaticamente
+bash scripts/setup-pb-test.sh --run-tests
+
+# Ou iniciar apenas o servidor para testes manuais
+bash scripts/setup-pb-test.sh
+```
+
+### Execução de Testes Automatizados
+Os testes validam migrações, permissões, isolamento comercial e bloqueio de pedidos:
+
+```bash
+pnpm test:homologation
+```
+
+### GitHub Actions
+O pipeline de CI executa automaticamente lint, typecheck, build e testes de integração a cada push na branch `development-integrado`.
