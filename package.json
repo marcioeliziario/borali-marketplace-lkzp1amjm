@@ -14,9 +14,9 @@
     "format": "oxfmt",
     "format:check": "oxfmt --check",
     "preview": "vite preview",
-    "test": "node tests/homologation.test.js",
-    "test:homologation": "bash scripts/setup-pb-test.sh && node tests/homologation.test.js",
-    "test:watch": "node tests/homologation.test.js --watch"
+    "test": "node tests/homologation.test.mjs",
+    "test:homologation": "bash scripts/setup-pb-test.sh --run-tests",
+    "test:watch": "node tests/homologation.test.mjs --watch"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.4.0",
