@@ -1018,3 +1018,5 @@ export const MerchantDashboard: React.FC = () => {
     </div>
   )
 }
+
+export default MerchantDashboard

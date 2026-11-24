@@ -15,7 +15,7 @@ export async function getCities(): Promise<City[]> {
   try {
     return await pb.collection('cities').getFullList<City>({
       sort: '-is_pilot,name',
-      filter: 'is_active = true',
+      filter: 'is_active = true && (status = "active" || status = "" || status = null)',
     })
   } catch (error) {
     console.error('Erro ao buscar cidades:', error)
@@ -35,6 +35,18 @@ export async function getCityBySlug(slug: string): Promise<City | null> {
   } catch {
     return null
   }
+}
+
+export function getCityStatus(status?: string): 'operational' | 'preparation' | 'onboarding' | 'suspended' {
+  if (!status) return 'operational'
+  if (status === 'preparation') return 'preparation'
+  if (status === 'onboarding') return 'onboarding'
+  if (status === 'suspended') return 'suspended'
+  return 'operational'
+}
+
+export function canOrderInCity(status?: string): boolean {
+  return getCityStatus(status) === 'operational'
 }
 
 // CATEGORIAS
@@ -139,11 +151,6 @@ export async function createStoreCategory(data: Partial<StoreCategory>): Promise
   return await pb.collection('store_categories').create<StoreCategory>(data)
 }
 
-/** Aliases usados pelo CategoryManagerModal (mesma coleção store_categories). */
-export const createProductCategory = createStoreCategory
-export const updateProductCategory = updateStoreCategory
-export const deleteProductCategory = deleteStoreCategory
-
 export async function updateStoreCategory(
   id: string,
   data: Partial<StoreCategory>,
@@ -153,6 +160,24 @@ export async function updateStoreCategory(
 
 export async function deleteStoreCategory(id: string): Promise<boolean> {
   return await pb.collection('store_categories').delete(id)
+}
+
+// Aliases usados pelos componentes merchant (compatibilidade com nomes do original)
+export const createProductCategory = createStoreCategory
+export const updateProductCategory = updateStoreCategory
+export const deleteProductCategory = deleteStoreCategory
+
+/** Ajuste manual de estoque via hook backend */
+export async function adjustStock(
+  productId: string,
+  delta: number,
+  reason: string,
+): Promise<{ id: string; name: string; stock: number; unit: string }> {
+  const res = await pb.send('/backend/v1/borali/stock/adjust', {
+    method: 'POST',
+    body: { product_id: productId, delta, reason },
+  })
+  return res as { id: string; name: string; stock: number; unit: string }
 }
 
 // PRODUTOS
@@ -182,35 +207,16 @@ export async function getMerchantProducts(storeId: string): Promise<Product[]> {
 }
 
 /** Histórico de movimentações de estoque de um produto */
-export async function getStockMovements(options: {
-  productId: string
-  perPage?: number
-}): Promise<StockMovement[]> {
+export async function getStockMovements(productId: string): Promise<StockMovement[]> {
   try {
-    return await pb
-      .collection('stock_movements')
-      .getList<StockMovement>(1, options.perPage ?? 20, {
-        filter: `product_id = "${options.productId}"`,
-        sort: '-created',
-      })
-      .then((r) => r.items)
+    return await pb.collection('stock_movements').getFullList<StockMovement>({
+      filter: `product_id = "${productId}"`,
+      sort: '-created',
+    })
   } catch (error) {
     console.error('Erro ao buscar movimentações de estoque:', error)
     return []
   }
-}
-
-/** Ajuste manual de estoque — o hook backend registra a movimentação e bloqueia negativo */
-export async function adjustStock(
-  productId: string,
-  delta: number,
-  reason: string,
-): Promise<Product> {
-  const res = await pb.send('/backend/v1/borali/stock/adjust', {
-    method: 'POST',
-    body: { product_id: productId, delta, reason },
-  })
-  return res as Product
 }
 
 /** Atualização em lote via hook backend (valida propriedade server-side) */

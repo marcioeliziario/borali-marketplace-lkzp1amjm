@@ -10,12 +10,16 @@ import {
   Compass,
   LogOut,
   Sparkles,
+  AlertCircle,
+  Clock,
+  CheckCircle2,
 } from 'lucide-react'
 import { BoraliLogo } from '@/components/brand/BoraliLogo'
 import { useCity } from '@/contexts/CityContext'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCart } from '@/contexts/CartContext'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -56,6 +60,21 @@ export const Header: React.FC = () => {
               <DropdownMenuTrigger className="flex items-center gap-1 font-semibold text-white hover:text-white/90 bg-white/10 px-2 py-0.5 rounded transition">
                 <span>
                   {selectedCity ? `${selectedCity.name} - ${selectedCity.state}` : 'Carregando...'}
+                  {selectedCity && (
+                    <Badge
+                      variant={
+                        selectedCity.status === 'active'
+                          ? 'default'
+                          : selectedCity.status === 'suspended'
+                          ? 'destructive'
+                          : 'secondary'
+                      }
+                      size="sm"
+                    >
+                      {selectedCity.status === 'active' && <CheckCircle2 className="w-2 h-2 mr-1" />}{selectedCity.status === 'preparation' && <Clock className="w-2 h-2 mr-1" />}{selectedCity.status === 'onboarding' && <Clock className="w-2 h-2 mr-1" />}{selectedCity.status === 'suspended' && <AlertCircle className="w-2 h-2 mr-1" />}
+                      {selectedCity.status}
+                    </Badge>
+                  )}
                 </span>
                 <ChevronDown className="w-3.5 h-3.5 opacity-80" />
               </DropdownMenuTrigger>
