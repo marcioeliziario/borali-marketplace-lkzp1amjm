@@ -14,8 +14,9 @@
     "format": "oxfmt",
     "format:check": "oxfmt --check",
     "preview": "vite preview",
-    "test": "echo \"there are no tests for this project\" && exit 0",
-    "test:watch": "echo \"there are no tests for this project\" && exit 0"
+    "test": "node tests/homologation.test.js",
+    "test:homologation": "bash scripts/setup-pb-test.sh && node tests/homologation.test.js",
+    "test:watch": "node tests/homologation.test.js --watch"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.4.0",
