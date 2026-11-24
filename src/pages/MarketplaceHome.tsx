@@ -211,7 +211,7 @@ export const MarketplaceHome: React.FC = () => {
                   Mercearia Central
                 </li>
               </ul>
-              <Link to="/compras" className="mt-6 inline-flex items-center gap-2 text-[#1754AE] font-semibold hover:underline">
+              <Link to={`/${currentCitySlug}/compras`} className="mt-6 inline-flex items-center gap-2 text-[#1754AE] font-semibold hover:underline">
                 Ir para Compras
                 <ArrowRight className="w-4 h-4" />
               </Link>
@@ -244,7 +244,7 @@ export const MarketplaceHome: React.FC = () => {
                   Eletricista
                 </li>
               </ul>
-              <Link to="/servicos" className="mt-6 inline-flex items-center gap-2 text-[#1754AE] font-semibold hover:underline">
+              <Link to={`/${currentCitySlug}/servicos`} className="mt-6 inline-flex items-center gap-2 text-[#1754AE] font-semibold hover:underline">
                 Ir para Serviços
                 <ArrowRight className="w-4 h-4" />
               </Link>

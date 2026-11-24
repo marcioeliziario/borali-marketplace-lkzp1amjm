@@ -1,11 +1,11 @@
 name: CI Borali
 
 on:
- pull_request:
- branches: [main, development-integrado]
- push:
- branches: [development-integrado]
- workflow_dispatch:
+  pull_request:
+    branches: [main, development-integrado]
+  push:
+    branches: [development-integrado, feature/borali-experiencia-obidos]
+  workflow_dispatch:
 
 jobs:
  validate:
