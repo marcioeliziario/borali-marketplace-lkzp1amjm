@@ -6,6 +6,8 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import Layout from './components/Layout'
 import MarketplaceHome from './pages/MarketplaceHome'
 import StoreFront from './pages/StoreFront'
+import BoraliCompras from './pages/BoraliCompras'
+import BoraliServicos from './pages/BoraliServicos'
 import Login from './pages/Login'
 import MerchantDashboard from './pages/MerchantDashboard'
 import AdminDashboard from './pages/AdminDashboard'
@@ -32,6 +34,10 @@ const App = () => (
 
                 {/* Rota da Cidade / Marketplace */}
                 <Route path="/:citySlug" element={<MarketplaceHome />} />
+
+                {/* Ambientes Comerciais - Borali Compras e Borali Serviços */}
+                <Route path="/:citySlug/compras" element={<BoraliCompras />} />
+                <Route path="/:citySlug/servicos" element={<BoraliServicos />} />
 
                 {/* Loja Virtual no formato /cidade/estabelecimento */}
                 <Route path="/:citySlug/:storeSlug" element={<StoreFront />} />
