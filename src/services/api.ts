@@ -11,11 +11,13 @@ import {
 } from '@/types'
 
 // CIDADES
+// Retorna todas as cidades ativas (preparation, onboarding, active, suspended)
+// O frontend usa canOrderInCity() para decidir se permite pedidos
 export async function getCities(): Promise<City[]> {
   try {
     return await pb.collection('cities').getFullList<City>({
       sort: '-is_pilot,name',
-      filter: 'is_active = true && (status = "active" || status = "" || status = null)',
+      filter: 'is_active = true',
     })
   } catch (error) {
     console.error('Erro ao buscar cidades:', error)
