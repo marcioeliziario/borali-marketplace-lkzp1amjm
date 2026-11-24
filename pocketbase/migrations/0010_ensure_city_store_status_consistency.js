@@ -16,8 +16,8 @@ migrate(
  const currentStatus = city.get('status') || ''
 
  if (!['preparation', 'onboarding', 'active', 'suspended'].includes(currentStatus)) {
- // Caso ambíguo: não ativar automaticamente, marcar para revisão
- city.set('status', 'pending_review')
+ // Caso ambíguo: não ativar automaticamente, manter inativo com status válido
+ city.set('status', 'suspended')
  city.set('is_active', false)
  app.save(city)
  }
@@ -29,8 +29,8 @@ migrate(
  const currentStatus = store.get('status') || ''
 
  if (!['pending', 'approved', 'rejected', 'suspended'].includes(currentStatus)) {
- // Caso ambíguo: não aprovar automaticamente, marcar para revisão
- store.set('status', 'pending_review')
+ // Caso ambíguo: não aprovar automaticamente, manter inativo com status válido
+ store.set('status', 'suspended')
  store.set('is_active', false)
  app.save(store)
  }

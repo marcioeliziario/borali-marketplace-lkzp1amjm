@@ -84,17 +84,18 @@ onRecordBeforeCreateRequest((e) => {
       throw new BadRequestError(message)
     }
 
-    // Validação 2: Loja deve estar ativa e aprovada
+    // Validação 2: Loja deve estar ATIVA e APROVADA (exigência explícita)
     const storeIsActive = store.get('is_active')
     const storeStatus = store.get('status')
 
-    if (!storeIsActive) {
+    // Exigência explícita: status DEVE ser 'approved' E is_active DEVE ser true
+    if (storeStatus !== 'approved' || storeIsActive !== true) {
       try {
         const auditLog = new Record(e.app.findCollectionByNameOrId('audit_log'))
         auditLog.set('user_id', auth.get('id'))
         auditLog.set('user_email', auth.get('email'))
         auditLog.set('user_role', auth.get('role') || 'customer')
-        auditLog.set('action', 'order.blocked.store_inactive')
+        auditLog.set('action', 'order.blocked.store_not_ready')
         auditLog.set('resource', 'orders')
         auditLog.set('resource_id', orderId)
         auditLog.set(
@@ -103,35 +104,19 @@ onRecordBeforeCreateRequest((e) => {
             store_id: storeId,
             store_name: store.get('name'),
             store_status: storeStatus,
+            store_is_active: storeIsActive,
           }),
         )
         e.app.save(auditLog)
       } catch (_) {}
 
-      throw new BadRequestError('Esta loja não está aceitando pedidos no momento.')
-    }
-
-    if (storeStatus && storeStatus !== 'approved') {
-      try {
-        const auditLog = new Record(e.app.findCollectionByNameOrId('audit_log'))
-        auditLog.set('user_id', auth.get('id'))
-        auditLog.set('user_email', auth.get('email'))
-        auditLog.set('user_role', auth.get('role') || 'customer')
-        auditLog.set('action', 'order.blocked.store_not_approved')
-        auditLog.set('resource', 'orders')
-        auditLog.set('resource_id', orderId)
-        auditLog.set(
-          'details',
-          JSON.stringify({
-            store_id: storeId,
-            store_name: store.get('name'),
-            store_status: storeStatus,
-          }),
-        )
-        e.app.save(auditLog)
-      } catch (_) {}
-
-      throw new BadRequestError('Esta loja aguarda aprovação para aceitar pedidos.')
+      let message = 'Esta loja não está pronta para receber pedidos.'
+      if (storeStatus !== 'approved') {
+        message = 'Loja ainda não foi aprovada pela administração.'
+      } else if (storeIsActive !== true) {
+        message = 'Loja está inativa no momento.'
+      }
+      throw new BadRequestError(message)
     }
 
     // Validação 3: Campos críticos (status, total) não podem ser manipulados pelo cliente
