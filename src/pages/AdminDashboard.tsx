@@ -22,6 +22,7 @@ import {
   getAllCategoriesAdmin,
   getAuditLogs,
   updateStore,
+  updateCity,
   logAudit,
 } from '@/services/api'
 import { City, Store as StoreType, Category, AuditLog } from '@/types'
@@ -30,6 +31,23 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useToast } from '@/hooks/use-toast'
+import { getCityStatus, canOrderInCity } from '@/services/api'
+import {
+ Dialog,
+ DialogContent,
+ DialogDescription,
+ DialogFooter,
+ DialogHeader,
+ DialogTitle,
+} from '@/components/ui/dialog'
+import { Label } from '@/components/ui/label'
+import {
+ Select,
+ SelectContent,
+ SelectItem,
+ SelectTrigger,
+ SelectValue,
+} from '@/components/ui/select'
 import pb from '@/lib/pocketbase/client'
 
 export const AdminDashboard: React.FC = () => {
@@ -42,6 +60,8 @@ export const AdminDashboard: React.FC = () => {
   const [categories, setCategories] = useState<Category[]>([])
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([])
   const [isLoading, setIsLoading] = useState(true)
+  const [editingCity, setEditingCity] = useState<City | null>(null)
+  const [isCityModalOpen, setIsCityModalOpen] = useState(false)
 
   useEffect(() => {
     if (!isAdmin) {
@@ -87,6 +107,66 @@ export const AdminDashboard: React.FC = () => {
         title: 'Erro ao alterar status',
         description: err?.message,
       })
+    }
+  }
+
+  const handleSaveCity = async () => {
+    if (!editingCity) return
+    try {
+      await updateCity(editingCity.id, { status: editingCity.status })
+      setCities(cities.map((c) => (c.id === editingCity.id ? editingCity : c)))
+      closeCityModal()
+      toast({
+        title: 'Cidade atualizada',
+        description: 'O status da cidade foi alterado com sucesso.',
+      })
+      await loadData()
+    } catch (err) {
+      toast({
+        title: 'Erro ao atualizar cidade',
+        description: 'Não foi possível salvar as alterações.',
+        variant: 'destructive',
+      })
+    }
+  }
+
+  const openCityModal = (city: City) => {
+    setEditingCity({ ...city })
+    setIsCityModalOpen(true)
+  }
+
+  const closeCityModal = () => {
+    setEditingCity(null)
+    setIsCityModalOpen(false)
+  }
+
+  const cityStatusLabel = (status: string) => {
+    switch (status) {
+      case 'preparation':
+        return 'Em preparação'
+      case 'onboarding':
+        return 'Em cadastro'
+      case 'active':
+        return 'Operacional'
+      case 'suspended':
+        return 'Suspensa'
+      default:
+        return status || 'Desconhecido'
+    }
+  }
+
+  const cityStatusVariant = (status: string) => {
+    switch (status) {
+      case 'active':
+        return 'default'
+      case 'onboarding':
+        return 'secondary'
+      case 'preparation':
+        return 'outline'
+      case 'suspended':
+        return 'destructive'
+      default:
+        return 'secondary'
     }
   }
 
@@ -367,14 +447,14 @@ export const AdminDashboard: React.FC = () => {
                       </code>
                     </p>
                     <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs text-slate-600">
-                      <span>Status: Ativa</span>
+                      <span>Status: {cityStatusLabel(city.status || 'active')}</span>
                       <Button
                         size="sm"
                         variant="outline"
-                        onClick={() => navigate(`/${city.slug}`)}
+                        onClick={() => openCityModal(city)}
                         className="text-xs"
                       >
-                        Acessar Cidade
+                        Gerenciar Status
                       </Button>
                     </div>
                   </CardContent>
@@ -476,6 +556,57 @@ export const AdminDashboard: React.FC = () => {
           </TabsContent>
         </Tabs>
       </div>
+
+      {/* Modal de Edição de Cidade */}
+      <Dialog open={isCityModalOpen} onOpenChange={setIsCityModalOpen}>
+        <DialogContent className="max-w-md bg-white">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold text-slate-900">
+              Gerenciar Status da Cidade
+            </DialogTitle>
+            <DialogDescription className="text-xs text-slate-500">
+              {editingCity?.name} - {editingCity?.state}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold text-slate-700">Status da Cidade</Label>
+              <Select
+                value={editingCity?.status || 'active'}
+                onValueChange={(value) =>
+                  setEditingCity((prev) => (prev ? { ...prev, status: value as any } : prev))
+                }
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Selecione o status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="preparation">Em preparação</SelectItem>
+                  <SelectItem value="onboarding">Em cadastro</SelectItem>
+                  <SelectItem value="active">Operacional</SelectItem>
+                  <SelectItem value="suspended">Suspensa</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="text-[11px] text-slate-500 bg-blue-50 border border-blue-200 rounded-lg p-2">
+              <strong>Observação:</strong> Cidades em "Em preparação" ou "Em cadastro" são visíveis
+              ao público, mas não aceitam pedidos. Somente cidades "Operacionais" podem receber
+              novos pedidos.
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={closeCityModal}>
+              Cancelar
+            </Button>
+            <Button size="sm" onClick={handleSaveCity} className="bg-[#1754AE] hover:bg-[#12428C]">
+              Salvar Alterações
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

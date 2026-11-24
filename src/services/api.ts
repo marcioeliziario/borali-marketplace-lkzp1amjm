@@ -49,6 +49,10 @@ export function canOrderInCity(status?: string): boolean {
   return getCityStatus(status) === 'operational'
 }
 
+export async function updateCity(cityId: string, data: Partial<City>): Promise<City> {
+  return await pb.collection('cities').update<City>(cityId, data)
+}
+
 // CATEGORIAS
 export async function getCategories(): Promise<Category[]> {
   try {
