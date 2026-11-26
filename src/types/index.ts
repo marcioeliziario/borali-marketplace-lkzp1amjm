@@ -2,6 +2,8 @@ import type { Variation, ComplementGroup } from '@/lib/catalog'
 
 export type UserRole = 'admin' | 'merchant' | 'delivery' | 'customer'
 
+export type CityStatus = 'preparation' | 'onboarding' | 'active' | 'suspended'
+
 export interface City {
   id: string
   name: string
@@ -9,6 +11,7 @@ export interface City {
   slug: string
   is_active: boolean
   is_pilot?: boolean
+  status?: CityStatus
   created?: string
   updated?: string
 }
