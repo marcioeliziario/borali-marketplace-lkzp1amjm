@@ -60,22 +60,39 @@ Conforme a Seção 14 da especificação:
 
 ---
 
-## 5.1 Estado atual (v0.2)
-
-- **Painel do comerciante** (`/painel-lojista`): formulário completo em seções (informações, fotos com upload múltiplo, preços e promoção com período, estoque com movimentações, variações, complementos, lote/peso), categorias internas, ações em lote (arquivar, duplicar, ativar/desativar), ajuste de estoque com histórico e importação/exportação CSV com pré-visualização e modelo.
-- **Backend (Skip Cloud / PocketBase):** 9 coleções em produção de dados (`cities`, `categories`, `stores`, `products`, `orders`, `audit_log`, `store_categories`, `stock_movements`, `users`), hooks em `pocketbase/hooks/products.pb.js` com isolamento server-side entre estabelecimentos, auditoria em criação/atualização/exclusão/movimentação de estoque e migrações versionadas em `pocketbase/migrations/`.
-- **Usuário de teste:** `comerciante.mercadinho@borali.local` (role `merchant`, vinculado ao Mercadinho, senha `Skip@Pass`) criado pela migração 0006 para validar isolamento entre lojas — teste automatizado em `scripts/test-isolamento.ts` (rode com `npx tsx scripts/test-isolamento.ts`).
-- **Util central de promoções:** `src/lib/catalog.ts` (getPromoInfo / isPromoActive / getEffectivePrice) — único ponto de verdade para exibir preço riscado e % apenas quando a promoção está vigente.
-- **Preview:** `https://borali--preview.goskip.app` (rotas `/obidos/mercadinho` e `/obidos/distribuidora-barbosa`).
-
----
-
 ## 5. Roadmap Oficial Borali
 
-- **v0.1:** Fundação e identidade visual (Concluída).
-- **v0.2:** Catálogo completo e gestão avançada de produtos (Concluída — painel do lojista em seções, promoções com período, estoque com movimentações, variações, complementos, fotos, ações em lote, CSV com prévia, auditoria server-side e usuário de teste com isolamento validado).
+- **v0.1:** Fundação e identidade visual (Concluída nesta rodada).
+- **v0.2:** Catálogo completo e gestão avançada de produtos.
 - **v0.3:** Carrinho interativo e fluxo completo de pedidos.
 - **v0.4:** Pagamentos integrados (Pix automático, dinheiro e maquininha) e módulo de entregadores.
 - **v0.5:** Gestão financeira, comissões e conciliação.
 - **v0.6:** Integração oficial com WhatsApp.
 - **v1.0:** Lançamento comercial oficial em Óbidos/PA.
+
+---
+
+## 6. Homologação Técnica e Testes
+
+Para garantir a estabilidade e segurança da plataforma, utilize os scripts de homologação local:
+
+### Ambiente PocketBase Isolado
+O script `scripts/setup-pb-test.sh` configura uma instância descartável do PocketBase compatível com macOS (Intel/Apple Silicon) e Linux:
+
+```bash
+# Iniciar ambiente e rodar testes automaticamente
+bash scripts/setup-pb-test.sh --run-tests
+
+# Ou iniciar apenas o servidor para testes manuais
+bash scripts/setup-pb-test.sh
+```
+
+### Execução de Testes Automatizados
+Os testes validam migrações, permissões, isolamento comercial e bloqueio de pedidos:
+
+```bash
+pnpm test:homologation
+```
+
+### GitHub Actions
+O pipeline de CI executa automaticamente lint, typecheck, build e testes de integração a cada push na branch `development-integrado`.

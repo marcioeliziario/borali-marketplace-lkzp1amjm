@@ -12,9 +12,11 @@ import {
   Percent,
   CheckCircle2,
   AlertTriangle,
+  MapPin,
+  ArrowRight,
 } from 'lucide-react'
 import { useCity } from '@/contexts/CityContext'
-import { Category, Store, Product } from '@/types'
+import { Category, Store as StoreType, Product } from '@/types'
 import { getCategories, getStoresByCity, getProductsByStore } from '@/services/api'
 import { isPromoActive, getPromoInfo } from '@/lib/catalog'
 import CategoryIcon from '@/components/common/CategoryIcon'
@@ -118,25 +120,30 @@ export const MarketplaceHome: React.FC = () => {
         </div>
       </div>
 
-      {/* HERO SECTION / BANNER PRINCIPAL */}
-      <div className="bg-gradient-to-br from-[#1754AE] via-[#12428C] to-[#0D3067] text-white py-8 sm:py-12 px-4 shadow-inner relative overflow-hidden">
-        {/* Elemento de fundo sutil */}
-        <div className="absolute right-0 top-0 bottom-0 w-1/3 bg-white/5 transform skew-x-12 pointer-events-none" />
+      {/* HERO SECTION / BANNER PRINCIPAL COM FOTOGRAFIA DE ÓBIDOS */}
+      <div className="relative text-white py-16 sm:py-24 px-4 shadow-lg overflow-hidden min-h-[500px] flex items-center">
+        {/* Fotografia autêntica de Óbidos (Igreja Matriz/Rio Amazonas) - Wikimedia Commons */}
+        <div
+          className="absolute inset-0 bg-cover bg-center z-0"
+          style={{ backgroundImage: "url('https://upload.wikimedia.org/wikipedia/commons/thumb/c/c8/Igreja_de_Nossa_Senhora_da_Concei%C3%A7%C3%A3o_%28%C3%93bidos%2C_Par%C3%A1%29.jpg/1280px-Igreja_de_Nossa_Senhora_da_Concei%C3%A7%C3%A3o_%28%C3%93bidos%2C_Par%C3%A1%29.jpg')" }}
+        >
+          <div className="absolute inset-0 bg-gradient-to-r from-[#1754AE]/95 via-[#1754AE]/80 to-transparent" />
+        </div>
 
-        <div className="max-w-7xl mx-auto relative z-10">
-          <div className="max-w-2xl space-y-4">
-            <div className="inline-flex items-center gap-2 bg-white/10 backdrop-blur-md px-3 py-1 rounded-full text-xs font-medium text-white/90">
-              <span className="w-2 h-2 rounded-full bg-[#E63239] animate-pulse" />
-              <span>O comércio local de Óbidos na palma da sua mão</span>
+        <div className="max-w-7xl mx-auto relative z-10 w-full">
+          <div className="max-w-2xl space-y-6">
+            <div className="inline-flex items-center gap-2 bg-white/20 backdrop-blur-md px-3 py-1.5 rounded-full text-xs font-bold text-white border border-white/30">
+              <MapPin className="w-3.5 h-3.5 text-[#E63239]" />
+              <span>{currentCityName} • Cidade Piloto</span>
             </div>
 
-            <h1 className="text-3xl sm:text-4xl md:text-5xl font-extrabold tracking-tight text-white leading-tight">
-              Sua cidade, <span className="text-[#E63239]">mais perto de você</span>
+            <h1 className="text-4xl sm:text-5xl md:text-6xl font-black tracking-tight text-white leading-[1.1] drop-shadow-md">
+              Sua cidade, <br />
+              <span className="text-[#E63239]">mais perto de você.</span>
             </h1>
 
-            <p className="text-sm sm:text-base text-white/80 leading-relaxed max-w-xl">
-              Peça dos melhores mercados, mercearias, distribuidoras e comércios locais em{' '}
-              {currentCityName}. Rápido, fácil e valorizando os empreendedores da nossa terra.
+            <p className="text-base sm:text-lg text-white/90 leading-relaxed max-w-lg font-medium drop-shadow-sm">
+              Conectando você ao melhor do comércio e dos serviços locais. Da Distribuidora Barbosa aos profissionais da sua rua.
             </p>
 
             {/* BARRA DE PESQUISA */}
@@ -168,6 +175,83 @@ export const MarketplaceHome: React.FC = () => {
       </div>
 
       <div className="max-w-7xl mx-auto px-4 py-8 space-y-10">
+        {/* BORALI COMPRAS E BORALI SERVIÇOS */}
+        <section className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+          <div className="bg-slate-50 px-6 py-4 border-b border-slate-200">
+            <h2 className="text-lg font-bold text-slate-900 flex items-center gap-3">
+              <Store className="w-5 h-5 text-[#1754AE]" />
+              Como funciona o Borali
+            </h2>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-0 border-y border-slate-200">
+            {/* Coluna esquerda: Borali Compras */}
+            <div className="p-6 md:p-8 border-r border-slate-200 md:border-r-0 md:border-b">
+              <h3 className="text-2xl font-bold text-[#1754AE] mb-3">Borali Compras</h3>
+              <p className="text-slate-600 text-lg mb-6 leading-relaxed">
+                Peça produtos dos melhores mercados, mercearias e distribuidoras locais com
+                entrega rápida em Óbidos.
+              </p>
+              <ul className="space-y-3 text-slate-700">
+                <li className="flex items-center gap-3">
+                  <span className="w-5 h-5 rounded-full bg-[#E63239]/10 text-[#E63239] flex items-center justify-center font-bold text-xs">
+                    ✓
+                  </span>
+                  Distribuidora Barbosa
+                </li>
+                <li className="flex items-center gap-3">
+                  <span className="w-5 h-5 rounded-full bg-[#E63239]/10 text-[#E63239] flex items-center justify-center font-bold text-xs">
+                    ✓
+                  </span>
+                  Mercadinho São João
+                </li>
+                <li className="flex items-center gap-3">
+                  <span className="w-5 h-5 rounded-full bg-[#E63239]/10 text-[#E63239] flex items-center justify-center font-bold text-xs">
+                    ✓
+                  </span>
+                  Mercearia Central
+                </li>
+              </ul>
+              <Link to={`/${currentCitySlug}/compras`} className="mt-6 inline-flex items-center gap-2 text-[#1754AE] font-semibold hover:underline">
+                Ir para Compras
+                <ArrowRight className="w-4 h-4" />
+              </Link>
+            </div>
+
+            {/* Coluna direita: Borali Serviços */}
+            <div className="p-6 md:p-8">
+              <h3 className="text-2xl font-bold text-[#1754AE] mb-3">Borali Serviços</h3>
+              <p className="text-slate-600 text-lg mb-6 leading-relaxed">
+                Encontre e contrate profissionais autônomos da sua região: entregadores,
+                pedreiros, eletricistas e mais.
+              </p>
+              <ul className="space-y-3 text-slate-700">
+                <li className="flex items-center gap-3">
+                  <span className="w-5 h-5 rounded-full bg-[#1754AE]/10 text-[#1754AE] flex items-center justify-center font-bold text-xs">
+                    ✓
+                  </span>
+                  Motorista entregador
+                </li>
+                <li className="flex items-center gap-3">
+                  <span className="w-5 h-5 rounded-full bg-[#1754AE]/10 text-[#1754AE] flex items-center justify-center font-bold text-xs">
+                    ✓
+                  </span>
+                  Pedreiro / Reparos
+                </li>
+                <li className="flex items-center gap-3">
+                  <span className="w-5 h-5 rounded-full bg-[#1754AE]/10 text-[#1754AE] flex items-center justify-center font-bold text-xs">
+                    ✓
+                  </span>
+                  Eletricista
+                </li>
+              </ul>
+              <Link to={`/${currentCitySlug}/servicos`} className="mt-6 inline-flex items-center gap-2 text-[#1754AE] font-semibold hover:underline">
+                Ir para Serviços
+                <ArrowRight className="w-4 h-4" />
+              </Link>
+            </div>
+          </div>
+        </section>
+
         {/* CARROSSEL DE CATEGORIAS (19 Categorias Iniciais) */}
         <div>
           <div className="flex items-center justify-between mb-4">

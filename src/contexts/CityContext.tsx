@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react'
 import { City } from '@/types'
-import { getCities } from '@/services/api'
+import { getCities, canOrderInCity } from '@/services/api'
 
 interface CityContextType {
   cities: City[]
@@ -8,6 +8,7 @@ interface CityContextType {
   setSelectedCity: (city: City) => void
   selectCityBySlug: (slug: string) => City | null
   isLoading: boolean
+  cityCanOrder: boolean
 }
 
 const CityContext = createContext<CityContextType | undefined>(undefined)
@@ -16,6 +17,7 @@ export const CityProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [cities, setCities] = useState<City[]>([])
   const [selectedCity, setSelectedCityState] = useState<City | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [cityCanOrder, setCityCanOrder] = useState(false)
 
   useEffect(() => {
     async function load() {
@@ -23,12 +25,18 @@ export const CityProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const data = await getCities()
       setCities(data)
 
-      // Cidade padrão: Óbidos ou primeira da lista
+      // Se houver cidade selecionada, verificar se permite pedidos
       const savedSlug = localStorage.getItem('borali_selected_city')
       let initialCity = data.find((c) => c.slug === savedSlug)
       if (!initialCity) {
         initialCity = data.find((c) => c.slug === 'obidos') || data[0] || null
       }
+
+      // Atualizar estado de habilitação de pedidos
+      if (initialCity) {
+        setCityCanOrder(canOrderInCity(initialCity.status))
+      }
+
       setSelectedCityState(initialCity)
       setIsLoading(false)
     }
@@ -37,6 +45,7 @@ export const CityProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const setSelectedCity = (city: City) => {
     setSelectedCityState(city)
+    setCityCanOrder(canOrderInCity(city.status))
     localStorage.setItem('borali_selected_city', city.slug)
   }
 
@@ -57,6 +66,7 @@ export const CityProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setSelectedCity,
         selectCityBySlug,
         isLoading,
+        cityCanOrder,
       }}
     >
       {children}
